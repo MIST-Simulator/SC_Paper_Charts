@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------
+# MIST SC26 reproduction artifacts
+# ---------------------------------------------------------------
+# Generated experiment output and figures are reproducible, so they
+# are not tracked -- but the reference results behind the published
+# figures are, since plot_T*.py falls back to them.
+results/*
+!results/reference/
+results/reference/*/*.csv.partial
+figures/*
+!figures/.gitkeep
+
+# Downloaded traces (fetched by scripts/download_traces.sh).
+data/traces/AzureLLMInferenceTrace_*.csv
+data/traces/ShareGPT_*.json
+
+# MIST simulator runtime caches
+Platform_traces_logs/
+*.db
+*.db-wal
+*.db-shm
+trace.json
+
+.DS_Store

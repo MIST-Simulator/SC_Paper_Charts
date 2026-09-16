@@ -1,0 +1,14 @@
+# The MIST simulator itself, plus its analytical hardware model (GenZ).
+# Pin these to a tag before artifact submission so reviewers get the exact
+# version the paper was produced with.
+git+https://github.com/abhibambhaniya/GenZ-LLM-Analyzer.git@main#egg=genz_llm
+git+https://github.com/MIST-Simulator/MIST.git@main#egg=GenA_llm
+
+# Analysis and plotting.
+numpy>=1.26,<3
+pandas>=2.0
+scipy>=1.11
+scikit-learn>=1.4
+matplotlib>=3.8
+seaborn>=0.13
+tqdm>=4.66
