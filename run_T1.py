@@ -67,7 +67,7 @@ def _patch_genz_quant_compat() -> None:
     *any* GenZ ``System`` (and hence any MIST ``vLLMPlatformConfig``) raises
     ``AttributeError`` immediately, for every platform. This is a pure
     monkeypatch executed from this script only -- it does not modify the
-    installed GenZ/GenA packages, which live outside this repository and are
+    installed GenZ/MIST packages, which live outside this repository and are
     intentionally left untouched; the real fix (aliasing ``.bfloat16`` back
     onto ``.float16``, or updating GenZ's own references) belongs upstream
     in GenZ-LLM-Analyzer's ``GenZ/db.py``.
@@ -103,19 +103,19 @@ def _patch_genz_quant_compat() -> None:
 
 _patch_genz_quant_compat()
 
-import GenA  # noqa: E402  (import after the compat shim above)
-from GenA import TraceIngestion  # noqa: E402  (not re-exported by mist_api)
-from mist_charts.mist_api import (  # noqa: E402
+from mist_charts.mist_api import (  # noqa: E402  (after the compat shim above)
     BatchingMethod,
     EngineType,
-    GenACoordinator,
+    MISTCoordinator,
     LLMEngine,
     PoissonDistribution,
     SchedulerConfig,
+    TraceIngestion,
+    mist_package_path,
     vLLMPlatformConfig,
 )
 
-GENA_RUNTIME_DIR = Path(GenA.__file__).resolve().parent / "Platforms" / "vllm_runtime_data"
+MIST_RUNTIME_DIR = mist_package_path() / "Platforms" / "vllm_runtime_data"
 SHAREGPT_PATH = TRACE_DIR / "ShareGPT_V3_unfiltered_cleaned_split.json"
 _WORD_RE = re.compile(r"\S+")
 
@@ -131,7 +131,7 @@ PLATFORMS = {
         device="L40S_GPU",
         tensor_parallel_size=2,
         pipeline_parallel_size=1,
-        vllm_df_path=GENA_RUNTIME_DIR / "Qwen3-32B_NVIDIA_L40S_2.csv",
+        vllm_df_path=MIST_RUNTIME_DIR / "Qwen3-32B_NVIDIA_L40S_2.csv",
         result_filename="mist_l40s.csv",
         baseline_vllm_json=VALIDATION_DIR / "T1" / "vllm_l40s_qwen3-32b_tp2.json",
         baseline_field="e2els",
@@ -146,7 +146,7 @@ PLATFORMS = {
         device="H100_GPU",
         tensor_parallel_size=8,
         pipeline_parallel_size=1,
-        vllm_df_path=GENA_RUNTIME_DIR / "Hermes-4-70B_NVIDIA_H100_8.csv",
+        vllm_df_path=MIST_RUNTIME_DIR / "Hermes-4-70B_NVIDIA_H100_8.csv",
         result_filename="mist_h100.csv",
         baseline_vllm_json=VALIDATION_DIR / "T1" / "vllm_h100_llama3-70b_tp8.json",
         baseline_field="e2el",
@@ -265,7 +265,7 @@ def build_fixed_trace_queue(trace_path: Path) -> list:
     requests in the same arrival order, which is what makes Fig. 4 a valid
     controlled comparison rather than three simulators each answering a
     different question. ``TraceIngestion`` assigns ``request_id`` from the
-    CSV row order (see GenA/Input_requests/Trace_inputs.py), matching the
+    CSV row order (see mist/Input_requests/Trace_inputs.py), matching the
     order the vLLM benchmark client dispatched these requests in.
     """
     if not trace_path.exists():
@@ -280,9 +280,9 @@ def build_fixed_trace_queue(trace_path: Path) -> list:
 def build_resampled_queue(rps: float, num_requests: int, seed: int) -> list:
     """[--resample-sharegpt, opt-in] Resample `num_requests` ShareGPT
     conversations and schedule their arrivals as a Poisson process at
-    `rps`, using GenA's own seeded PoissonDistribution so the arrival-time
+    `rps`, using MIST's own seeded PoissonDistribution so the arrival-time
     math matches the simulator's other request-generation paths exactly
-    (--seed defaults to GenA's own RequestDistributions default of 259).
+    (--seed defaults to MIST's own RequestDistributions default of 259).
 
     This is a sensitivity-analysis mode, not the validation workload: its
     100 requests are a *different* sample than the fixed trace vLLM/Vidur/
@@ -342,7 +342,7 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
     silently share (and therefore corrupt) each other's per-step runtime
     cache -- we verified this collapses all three platforms' latencies to
     be bit-for-bit identical. Passing explicit dicts here works around it
-    entirely from this script; GenA itself is untouched.
+    entirely from this script; MIST itself is untouched.
     """
     vllm_df_path = cfg["vllm_df_path"]
     if not Path(vllm_df_path).exists():
@@ -364,7 +364,7 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
             "to report results that don't reflect the real runtime table."
         )
 
-    coordinator = GenACoordinator(
+    coordinator = MISTCoordinator(
         deepcopy(request_queue), logging_file=None, max_sim_time=500_000_000
     )
     coordinator.add_engine(

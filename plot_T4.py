@@ -7,7 +7,7 @@ access patterns.
 Reads ``results/T4/per_request.csv`` (falling back to
 ``results/reference/T4/per_request.csv``) written by ``run_T4.py``.  Runs
 standalone -- ``mist_charts.memory_configs`` is plain declarative data (no
-GenA/MIST import), so this script needs no MIST install to make the figure.
+mist/MIST import), so this script needs no MIST install to make the figure.
 """
 
 import sys

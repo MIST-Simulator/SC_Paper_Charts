@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 def check_imports():
     from mist_charts.mist_api import mist_version
 
-    print(f"  MIST (GenA_llm) version: {mist_version()}")
+    print(f"  MIST (mist) version: {mist_version()}")
     import matplotlib
     import numpy
     import pandas
@@ -31,7 +31,7 @@ def check_simulation():
     from mist_charts.mist_api import (
         BatchingMethod,
         EngineType,
-        GenACoordinator,
+        MISTCoordinator,
         LengthVariables,
         LLMEngine,
         PlatformConfig,
@@ -51,7 +51,7 @@ def check_simulation():
     print(f"  generated {len(request_queue)} requests")
 
     # logging_file=None keeps the smoke test from leaving a trace.json behind.
-    coordinator = GenACoordinator(deepcopy(request_queue), logging_file=None)
+    coordinator = MISTCoordinator(deepcopy(request_queue), logging_file=None)
     coordinator.add_engine(
         LLMEngine(
             model=model,

@@ -27,7 +27,7 @@ paper's figure (it isn't something this reproduction introduced), but
 or a double conversion hiding behind the wrong label — every source is
 seconds already, once, end to end:
 - `run_T1.py`: `mist_e2e_sec = (finished_time_ms - arrival_time_ms) / 1000.0`
-  (GenA's internal clock is milliseconds; dividing once yields seconds).
+  (MIST's internal clock is milliseconds; dividing once yields seconds).
 - `vllm_*.json`: `e2els`/`e2el` are vLLM benchmark_serving.py's native
   per-request seconds; used as-is.
 - `vidur_*_request_metrics.csv`: `request_e2e_time` is Vidur's native
@@ -115,8 +115,8 @@ Field notes:
 
 The equivalent tables for H100:TP8 (`Hermes-4-70B_NVIDIA_H100_8.csv`) and
 L40S:TP2 (`Qwen3-32B_NVIDIA_L40S_2.csv`) are **not** vendored here — they
-already ship inside the installed `GenA` package at
-`GenA/Platforms/vllm_runtime_data/`, and `run_T1.py` loads them from there
+already ship inside the installed `MIST` package at
+`mist/Platforms/vllm_runtime_data/`, and `run_T1.py` loads them from there
 directly. Only the TPU table needed vendoring into this repo.
 
 ## Fixed validation trace (default `run_T1.py` input)
@@ -172,12 +172,12 @@ in this directory.
 ## KNOWN_ISSUES: two upstream bugs found while building T1
 
 Both were found and worked around entirely from within `run_T1.py` — no
-files in `GenA` or `GenZ` were modified. Both should be routed to and
+files in `MIST` or `GenZ` were modified. Both should be routed to and
 fixed in their respective upstream repos.
 
-### 1. `GenA.Engine.LLMEngine` shares its per-step runtime cache across every engine in a process (serious)
+### 1. `mist.Engine.LLMEngine` shares its per-step runtime cache across every engine in a process (serious)
 
-`GenA/Engine/Mixed_LLM_Engine.py`'s `LLMEngine.__init__` declares:
+`mist/Engine/Mixed_LLM_Engine.py`'s `LLMEngine.__init__` declares:
 
 ```python
 def __init__(
@@ -209,10 +209,10 @@ kernel across notebook cells, a sweep script, etc.) — including,
 plausibly, parts of the original validation notebook this task ported
 from, if it constructed more than one `LLMEngine` per kernel session.
 
-**Workaround (in `run_T1.py`, not in GenA):** every `LLMEngine(...)` call
+**Workaround (in `run_T1.py`, not in MIST):** every `LLMEngine(...)` call
 here passes fresh `decode_only_cache={}, mixed_batch_cache={}` explicitly.
 
-**Real fix (upstream, in GenA):** change the defaults to `None` and
+**Real fix (upstream, in MIST):** change the defaults to `None` and
 allocate a fresh dict inside `__init__` when `None` is passed, e.g.
 `decode_only_cache: Optional[Dict] = None`, then
 `self._decode_only_cache = {} if decode_only_cache is None else decode_only_cache`
@@ -236,7 +236,7 @@ attribute 'bfloat16'` immediately.
 **Workaround (in `run_T1.py`, not in GenZ):** `_patch_genz_quant_compat()`
 monkeypatches `enum_cls.bfloat16 = enum_cls.float16` on the four affected
 enum classes, after importing `aiconfigurator.sdk.common` from GenZ's
-vendored submodule path, before importing anything from `GenA`/`mist_api`.
+vendored submodule path, before importing anything from `MIST`/`mist_api`.
 It's a no-op (skipped) if the enums already have a native `bfloat16`
 member, e.g. once upstream is fixed.
 

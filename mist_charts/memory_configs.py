@@ -1,7 +1,7 @@
 """The five KV-cache storage architectures compared in Fig. 10 (Table 2 of
 the MIST SC26 paper).
 
-This module holds only declarative data.  ``run_T4.py`` builds the GenA
+This module holds only declarative data.  ``run_T4.py`` builds the MIST
 ``MemoryCacheConfig`` / ``SingleCacheConfig`` objects (and the network-link
 parameters used for the cache -> compute transfer) from these records,
 ``plot_T4.py`` reads ``CASE_COLORS``/``CASE_ORDER`` for the legend, and the
@@ -32,7 +32,7 @@ class StorageArchitecture:
     key: str                       # 'A'..'E', matches the paper and the README
     label: str                     # short display name for legends/tables
     description: str               # one-line description of the access pattern
-    cache_type: str                # medium modeled by GenA's SingleCacheConfig
+    cache_type: str                # medium modeled by MIST's SingleCacheConfig
     capacity_gb: Optional[float]   # cache capacity in GB (None: no cache, Case E)
     cache_bandwidth_gbps: Optional[float]   # SingleCacheConfig bandwidth (GB/s)
     cache_retrieval_latency_ms: Optional[float]  # SingleCacheConfig fixed latency (ms)

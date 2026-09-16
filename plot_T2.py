@@ -12,7 +12,7 @@ validation.
 
 Reads the CSVs written by run_T2.py (falling back to results/reference/T2/
 when results/T2/ is absent) plus the vendored README under
-data/validation/T2/. Does not import MIST / GenA -- run standalone.
+data/validation/T2/. Does not import MIST / MIST -- run standalone.
 """
 
 import sys

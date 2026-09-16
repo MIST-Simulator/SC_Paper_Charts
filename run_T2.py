@@ -11,7 +11,7 @@ validation.
       not the GenZ analytical roofline. §4.2's validation subsection is
       explicitly scoped to "our ML-Based LLM Cluster Modeling (§4.1.1)".
       Accordingly, MIST here is ``vLLMPlatformConfig``
-      (GenA/Platforms/vllm_platform.py) -- the lookup + RandomForest-ensemble
+      (mist/Platforms/vllm_platform.py) -- the lookup + RandomForest-ensemble
       predictor over profiled vLLM data -- pointed at the vendored profiled
       CSVs under data/validation/T2/. It is *not* the plain
       ``PlatformConfig`` GenZ analytical path (see "Known upstream issues"
@@ -40,7 +40,7 @@ validation.
 
       Known upstream issues (see data/validation/T2/README.md for the full
       writeup): (1) the GenZ analytical path (`PlatformConfig.get_chunked_time`)
-      hardcodes `bits='fp8'` in 5 places in GenA/Platforms/platforms.py with
+      hardcodes `bits='fp8'` in 5 places in mist/Platforms/platforms.py with
       no dtype parameter exposed on `PlatformConfig.__init__`, which
       underpredicts bf16/fp16 vLLM latency by roughly 2-3x -- a real bug,
       but not the mechanism §4.2 / Fig. 6(a) uses, per the paper text above.
@@ -53,8 +53,8 @@ validation.
       SSD and DDR4, sequential reads, block sizes 256 KB - 1 GB, using a
       Llama-3-70B (meta-llama/llama-3.1-70b GenZ config, 160 KB/token) KV
       cache as the example. The MIST curve is produced by driving MIST's own
-      KV-retrieval cost model (GenA.Platforms.memory_platform.SingleCacheConfig
-      / MemoryCacheConfig, as used by GenA.Engine.KV_Retrieval_Engine) with
+      KV-retrieval cost model (mist.Platforms.memory_platform.SingleCacheConfig
+      / MemoryCacheConfig, as used by mist.Engine.KV_Retrieval_Engine) with
       representative DDR4/NVMe device parameters -- never a formula
       re-implemented in the plotting script.
 
@@ -347,7 +347,7 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
 KV_MODEL_NAME = "meta-llama/llama-3.1-70b"
 
 # Representative device parameters used to *parameterize* MIST's existing
-# retrieval-latency model (GenA.Platforms.memory_platform.SingleCacheConfig);
+# retrieval-latency model (mist.Platforms.memory_platform.SingleCacheConfig);
 # these are not measurements -- the measured comparison lives in
 # data/validation/T2/fio_retrieval_latency.csv. Values match the assumptions
 # used in the original prototype (combined_retreival_latency_plot.py):

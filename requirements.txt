@@ -2,7 +2,7 @@
 # Pin these to a tag before artifact submission so reviewers get the exact
 # version the paper was produced with.
 git+https://github.com/abhibambhaniya/GenZ-LLM-Analyzer.git@main#egg=genz_llm
-git+https://github.com/MIST-Simulator/MIST.git@main#egg=GenA_llm
+git+https://github.com/MIST-Simulator/MIST.git@main#egg=mist
 
 # Analysis and plotting.
 numpy>=1.26,<3

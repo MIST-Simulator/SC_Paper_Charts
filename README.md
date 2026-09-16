@@ -181,7 +181,7 @@ figures/               generated PDFs
 
 ## Troubleshooting
 
-**`ImportError: Could not import the MIST simulator`** — the `GenA` package
+**`ImportError: Could not import the MIST simulator`** — the `MIST` package
 is not installed in the active environment. Run `./setup.sh` and
 `conda activate mist-sc26`, or install it directly with
 `pip install git+https://github.com/MIST-Simulator/MIST.git`.

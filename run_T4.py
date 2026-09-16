@@ -37,7 +37,7 @@ from mist_charts.memory_configs import CASE_ORDER, STORAGE_ARCHITECTURES, sharin
 from mist_charts.mist_api import (
     BatchingMethod,
     EngineType,
-    GenACoordinator,
+    MISTCoordinator,
     KVRetrievalEngine,
     LLMEngine,
     MemoryCacheConfig,
@@ -77,7 +77,7 @@ SCENARIOS = ["private", "shared"]
 def _quiet_stdout():
     """Mute stdout at the file-descriptor level for the sweep's duration.
 
-    GenA's analytical hardware model (GenZ) unconditionally prints a line
+    MIST's analytical hardware model (GenZ) unconditionally prints a line
     per batching decision; with ~130 engines x thousands of steps across a
     multi-threaded sweep that is both unreadable and slow. A plain
     ``contextlib.redirect_stdout`` per job is not thread-safe (it mutates
@@ -182,7 +182,7 @@ def build_base_stream(
 
 
 def realize_requests(stream: List[Dict], context_len: int, arch, num_clients: int, num_llm_engines: int):
-    """Turn the shared base stream into GenA ``Request`` objects for one
+    """Turn the shared base stream into MIST ``Request`` objects for one
     storage architecture: apply the short/long KV-context past_context (or,
     for Case E, inline recompute), and set engine_preference from the
     architecture's client-sharing group.
@@ -254,7 +254,7 @@ def run_one_config(
                 rows.append([src, dst, arch.network_latency_ms, arch.network_bandwidth_gbps])
     connection_df = pd.DataFrame(rows, columns=["src", "dst", "latency(msec)", "BW(GB/s)"])
 
-    coordinator = GenACoordinator(
+    coordinator = MISTCoordinator(
         requests,
         logging_file=None,
         max_sim_time=MAX_SIM_TIME_MS,
