@@ -20,8 +20,8 @@ per-step batch composition — each row is one scheduler step).
 | `vidur_step_runtime_H100_TP4.csv` | [Vidur](https://github.com/microsoft/vidur) simulator, same model/hardware/trace config, TP4 | Copied from `mist/Platforms/vllm_runtime_data/vidur_Llama-2-70b-hf_NVIDIA_H100_4_sharegpt.csv`. Separate simulator, separate environment — Vidur is not installed in this repo. Schema: `Prefill`, `Context`, `Time (ms)` (Vidur's own predicted step latency). |
 | `vidur_step_runtime_H100_TP8.csv` | Vidur simulator, TP8 | Copied from `mist/Platforms/vllm_runtime_data/vidur_Llama-2-70b-hf_NVIDIA_H100_8_sharegpt.csv`. |
 
-**Located at**: `/Users/abambhaniya3/Work/LLM-Sched/mist/Platforms/vllm_runtime_data/`
-on the machine these scripts were ported on (the `MIST` simulator checkout,
+**Located at**: `<mist-checkout>/mist/Platforms/vllm_runtime_data/`
+(the `MIST` simulator checkout,
 *not* this `SC_Paper_Charts` repo — the notebook that originally produced
 Figure 6a, `GenA_Paper_charts/Validation/3.ISCA26/individual_step_validation.ipynb`,
 read them from the same place via a `HOME_DIR` variable).
