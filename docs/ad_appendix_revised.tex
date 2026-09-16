@@ -1,0 +1,408 @@
+% ============================================================
+%  Artifact Description (AD) Appendix -- REVISED DRAFT
+%  SC 2026
+%
+%  Revision rationale: the original appendix described a
+%  limited-access *API* to the MIST engine, justified by
+%  "proprietary intellectual property that cannot be shared
+%  publicly".  MIST is now fully open source, so that carve-out
+%  is removed and the artifact becomes two conventional
+%  open-source repositories.  Reproduction times below are
+%  MEASURED, not estimated.
+% ============================================================
+
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{geometry}
+\geometry{margin=0.8in, top=0.8in}
+
+\newcommand{\tool}{{MIST }}
+\newcommand{\toolns}{{MIST}}
+
+\begin{document}
+
+\title{Artifact Description Appendix: MIST --- A Co-Design Framework for
+Heterogeneous, Multi-Stage LLM Inference}
+
+\author{\normalsize{Supercomputing 2026}}
+
+\maketitle
+
+% ============================================================
+\section*{Part 1: Overview of Contributions \& Artifacts}
+% ============================================================
+
+\subsection*{A. Paper's Main Contributions}
+
+The paper makes the following contributions for which computational
+artifacts are provided:
+
+\begin{enumerate}[leftmargin=1.2em]
+
+  \item \textbf{End-to-end LLM inference simulation framework (\tool).}
+        \tool is an event-driven simulator that models the full serving
+        stack --- workload, system/software, and hardware layers --- for
+        heterogeneous, multi-stage LLM inference pipelines.
+
+  \item \textbf{Heterogeneous hardware design-space exploration (DSE).}
+        Using \toolns, we systematically search multi-vendor prefill-decode
+        (PD) disaggregated deployment configurations and demonstrate that
+        heterogeneous configurations achieve higher generated tokens per
+        second per dollar than homogeneous single-vendor baselines.
+
+  \item \textbf{KV cache storage co-design.}
+        \tool enables hardware co-design for KV cache storage by
+        evaluating five distinct memory-hierarchy architectures,
+        revealing how storage granularity and bandwidth interact with
+        end-to-end tail latency under varying KV reuse patterns.
+
+\end{enumerate}
+
+\subsection*{B. Computational Artifacts}
+
+\begin{table}[h]
+\centering
+\caption{Computational Artifacts Overview}
+\label{tab:artifacts}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}p{2.6cm} p{3.6cm} p{1.8cm} p{3.2cm}@{}}
+\toprule
+\textbf{Artifact} & \textbf{Description} & \textbf{Related Contribution} & \textbf{Reproduced Paper Elements} \\
+\midrule
+\tool Simulator (A1) &
+  The complete, open-source \tool simulation engine.
+  Accepts request traces, model specifications, and hardware
+  parameters; returns per-request and aggregate latency,
+  throughput, and cost metrics. &
+  C1, C2, C3 &
+  All experiments \\
+\addlinespace
+Reproduction Scripts (A2) &
+  Python scripts that drive \toolns, sweep the relevant
+  parameter spaces, collect raw results, and generate
+  publication-ready figures. &
+  C1, C2, C3 &
+  Fig.~4 (a--d), Fig.~6 (a--b), Fig.~7 (a--b), Fig.~8, Fig.~10 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\noindent \textbf{A1 --- \tool simulator:}
+\begin{center}
+\url{https://github.com/MIST-Simulator/MIST}
+\end{center}
+
+\noindent \textbf{A2 --- Reproduction scripts:}
+\begin{center}
+\url{https://github.com/MIST-Simulator/SC_Paper_Charts}
+\end{center}
+
+\noindent Both are released under the MIT license.  A2 declares A1 as a
+pinned dependency in \texttt{requirements.txt}, so installing A2 installs
+the exact \tool revision used to produce the paper's figures.
+
+% ============================================================
+\section*{Part 2: Artifact Identification}
+% ============================================================
+
+\subsection*{A. Relation to Contributions}
+
+The primary artifact is the \tool simulator itself, released in full.
+It accepts:
+\begin{itemize}[leftmargin=1.2em]
+  \item \textbf{Workload input:} real or synthetic request traces
+        (arrival times, prompt/decode token lengths, and optional
+        prefix-KV context lengths).
+  \item \textbf{Model specification:} model name and tensor-parallelism
+        degree.
+  \item \textbf{Hardware configuration:} accelerator SKU, cluster
+        topology, and memory-hierarchy parameters.
+\end{itemize}
+\tool returns per-request and aggregate metrics as described in
+\S III.G, including Time to First Token (TTFT), Time per Output Token
+(TPOT), Time to Last Token (TTLT), step-level runtimes, and simulation
+wall-clock time.
+
+The reproduction scripts (A2) drive \tool across all experimental
+configurations described in the paper, write raw per-configuration
+result files, and invoke a separate set of plotting scripts to
+regenerate the figures.
+
+\paragraph{Reproducibility of simulated data.}
+Every \toolns-derived data point in every figure is produced by running
+the simulator from the scripts in A2; no simulated value is
+hand-transcribed.  Request traces are generated or replayed under fixed
+random seeds and \toolns's hardware models are deterministic, so
+re-running a task reproduces its result CSV, and therefore its figure,
+exactly.
+
+\paragraph{Vendored baseline data.}
+Measurements that cannot be regenerated without the original hardware or
+third-party simulators ship as data files in A2, each documented with its
+provenance: measured vLLM runs (L40S$\times$2, H100$\times$8, TPUv6e),
+Vidur outputs, LLMServingSim~2.0 outputs, and \texttt{fio} block-device
+latencies.  These are the reference points \tool is validated
+\emph{against}, not \toolns outputs.
+
+\subsection*{B. Expected Results}
+
+\paragraph{Validation (Fig.~4, Fig.~6).}
+\tool reproduces measured on-hardware end-to-end latency distributions
+with a mean absolute error of 6.5--11.5\% across the three validation
+platforms, while simulating 40--290$\times$ faster than the baseline
+simulators (Fig.~4(d)).
+For the per-step benchmarks (Fig.~6(a)), under a held-out evaluation
+split \toolns's ML-based LLM cluster model attains 2.1\% (prefill),
+0.5\% (decode), and 2.1\% (chunked prefill) mean absolute error, versus
+18.3\%, 7.7\%, and 14.9\% for Vidur.
+For KV retrieval (Fig.~6(b)), \tool tracks \texttt{fio} measurements to
+7.7\% (NVMe SSD) and 14.4\% (DDR4) for block sizes at or above 16\,MB;
+relative error is larger below 4\,MB, where absolute latencies are small.
+These results substantiate Contribution~1.
+
+\paragraph{Heterogeneous DSE (Fig.~7, Fig.~8).}
+The search confirms that heterogeneous multi-vendor PD-disaggregated
+configurations Pareto-dominate homogeneous single-vendor alternatives on
+the generated tokens/\$ axis, for both the chat and the code-generation
+use cases.
+Absolute tokens/\$ depends on the cloud rental prices listed in \S5.1
+(sampled November 2025); the performance ranking depends only on the
+hardware models and is unaffected by price movement.
+These results substantiate Contribution~2.
+
+\paragraph{KV Cache Storage DSE (Fig.~10).}
+The five storage architectures exhibit clearly differentiated latency
+CDFs.  Dedicated per-client memory (Case~A) and platform-level shared
+memory (Case~B) deliver the lowest tail latency for private KV caches at
+both context lengths, while rack-level shared SSD (Case~C) is best for
+shared global caches with long KV sequences.
+These results substantiate Contribution~3.
+
+\subsection*{C. Reproduction Time}
+
+Times below are measured on a 2023-class laptop-grade workstation
+(10 CPU cores, 32\,GB RAM), not estimated.
+
+\begin{table}[!th]
+\centering
+\caption{Measured Reproduction Times}
+\label{tab:times}
+\begin{tabular}{@{}lp{4.6cm}@{}}
+\toprule
+\textbf{Phase} & \textbf{Time} \\
+\midrule
+Artifact Setup      & $\sim$15 min (environment + trace download) \\
+Figure regeneration & $<$1 min (from shipped reference results) \\
+\addlinespace
+T1 execution        & $\sim$1 min \\
+T2 execution        & $\sim$1 min \\
+T4 execution        & $\sim$22 min \\
+T3 execution        & 6--8 h (\texttt{--fast-eval}); 20+ h (full) \\
+\midrule
+\textbf{Total}      & \textbf{$\sim$7--9 h (reduced T3); 21+ h (full)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent A reviewer who only wishes to confirm that the figures follow
+from the recorded results can regenerate all seven figures in under a
+minute with \texttt{bash run\_all.sh --plot-only}; the shipped reference
+results are themselves the output of the \texttt{run\_T*.py} invocations
+recorded in \texttt{results/reference/PROVENANCE.md}.
+
+\subsection*{D. Artifact Setup}
+
+\subsubsection*{Hardware}
+
+A standard Linux or macOS workstation with 8--16 CPU cores and at least
+16\,GB of RAM.  No GPU, accelerator, or special interconnect is required:
+\tool is an analytical/event-driven simulator and runs entirely on CPU.
+An internet connection is needed to install dependencies and download
+the input traces.
+
+\subsubsection*{Software}
+
+\begin{table}[h]
+\centering
+\caption{Required Software}
+\label{tab:software}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Package} & \textbf{Version} & \textbf{Purpose} & \textbf{URL} \\
+\midrule
+Conda / Miniconda & $\geq$23.x &
+  Environment management &
+  \url{https://docs.conda.io} \\
+Python            & 3.10--3.12 &
+  Experiment and plotting scripts &
+  \url{https://www.python.org} \\
+\tool             & pinned in \texttt{requirements.txt} &
+  Simulation engine &
+  See A1 above \\
+GenZ              & pinned in \texttt{requirements.txt} &
+  Analytical hardware model used by \tool &
+  \url{https://github.com/abhibambhaniya/GenZ-LLM-Analyzer} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\noindent All remaining Python dependencies (\texttt{numpy},
+\texttt{pandas}, \texttt{scipy}, \texttt{scikit-learn},
+\texttt{matplotlib}, \texttt{seaborn}) are pinned in
+\texttt{requirements.txt} and installed by the setup script.
+
+\subsubsection*{Datasets / Input}
+
+\begin{enumerate}[leftmargin=1.2em]
+
+  \item \textbf{Microsoft Azure LLM Inference Traces (2023).}
+        Public request traces used by the KV cache storage study.
+        {\small\url{https://github.com/Azure/AzurePublicDataset/blob/master/AzureLLMInferenceDataset2023.md}}
+
+  \item \textbf{ShareGPT conversation dataset.}
+        Used by the end-to-end validation experiments (T1).
+
+\end{enumerate}
+
+\noindent \texttt{scripts/download\_traces.sh} fetches both and places
+them in the expected directory structure.  The derived per-use-case
+traces required by T3 are committed to A2 and need no download.  The
+measured baseline data (vLLM, Vidur, LLMServingSim~2.0, \texttt{fio})
+is likewise committed to A2.
+
+\subsubsection*{Installation \& Deployment}
+
+\begin{enumerate}[leftmargin=1.2em]
+  \item Clone A2:
+        \texttt{git clone https://github.com/MIST-Simulator/SC\_Paper\_Charts.git}
+  \item Run \texttt{./setup.sh} to create the Conda environment and
+        install all dependencies, including \tool itself.
+  \item Activate it: \texttt{conda activate mist-sc26}.
+  \item Download the traces:
+        \texttt{bash scripts/download\_traces.sh}.
+  \item Verify the installation:
+        \texttt{python scripts/smoke\_test.py}
+        (imports \toolns, runs a short simulation, and renders a figure;
+        completes in under a minute).
+\end{enumerate}
+
+\subsection*{E. Artifact Evaluation}
+
+The workflow consists of four independent task groups, which may be run
+sequentially or concurrently (\texttt{bash run\_all.sh --parallel}).
+
+\medskip
+\noindent\textbf{T1 --- End-to-End Runtime Validation}
+\hfill\textit{($\sim$1 min | Reproduces: Fig.~4 a--d)}
+
+\begin{itemize}[leftmargin=1.2em, topsep=2pt]
+  \item \textbf{T1.1} --- Qwen3-32B on L40S$\times$2 (TP2).
+        Reproduces Fig.~4(a) and Fig.~4(d).
+  \item \textbf{T1.2} --- Llama3-70B on H100$\times$8 (TP8).
+        Reproduces Fig.~4(b) and Fig.~4(d).
+  \item \textbf{T1.3} --- Llama-3.1-8B on TPUv6e.
+        Reproduces Fig.~4(c) and Fig.~4(d).
+\end{itemize}
+Each replays the same fixed 100-request ShareGPT trace, at the same
+arrival schedule, that the vLLM/Vidur/LLMServingSim baselines were
+measured against; holding the workload fixed is what makes the
+comparison controlled.  \texttt{--resample-sharegpt} draws a fresh
+seeded sample instead, for sensitivity analysis.\\
+\textit{Dependencies:} none.
+\smallskip
+
+\noindent\textbf{T2 --- Individual Step Validation}
+\hfill\textit{($\sim$1 min | Reproduces: Fig.~6 a--b)}
+
+\begin{itemize}[leftmargin=1.2em, topsep=2pt]
+  \item \textbf{T2.1} --- Per-step prefill/decode/chunked runtimes for
+        Llama-2-70B on H100 (TP4 and TP8), evaluated on a held-out
+        split.  Reproduces Fig.~6(a).
+  \item \textbf{T2.2} --- KV cache retrieval latency for NVMe SSD and
+        DDR4 across block sizes from 256\,KB to 1\,GB, against
+        \texttt{fio} measurements.  Reproduces Fig.~6(b).
+\end{itemize}
+\textit{Dependencies:} none.
+\smallskip
+
+\noindent\textbf{T3 --- Heterogeneous Design-Space Search}\\
+\textit{(6--8 h reduced; 20+ h full | Reproduces: Fig.~7 a--b, Fig.~8)}
+
+\begin{itemize}[leftmargin=1.2em, topsep=2pt]
+  \item \textbf{T3.1} --- DSE for the chat conversation use case
+        (no prefix-KV reuse), at 100\,RPS with a TTFT P99 SLO.
+        Reproduces Fig.~7(a) and the chat column of Fig.~8.
+  \item \textbf{T3.2} --- DSE for the code generation use case with high
+        prefix-KV reuse, at 100\,RPS with a relaxed TTFT P99 SLO.
+        Reproduces Fig.~7(b) and the code-generation column of Fig.~8.
+\end{itemize}
+Both search hardware SKU $\times$ tensor parallelism $\times$ batching
+strategy $\times$ prefill-to-decode client ratio, and rank
+SLO-satisfying configurations by generated tokens/second/\$.\\
+\textit{Reduced search-space option:} \texttt{--fast-eval} restricts the
+search to a deterministic, stratified $\sim$150-configuration subset per
+use case that spans the Pareto frontier.  The sweep is resumable:
+re-running after an interruption skips completed configurations.\\
+\textit{Dependencies:} none; T3.1 and T3.2 are independent.
+\smallskip
+
+\noindent\textbf{T4 --- KV Cache Storage Design-Space Search}
+\hfill\textit{($\sim$22 min | Reproduces: Fig.~10)}
+
+Evaluates the five KV cache storage architectures of Table~2 on a
+256-GPU system (128 clients, H100:TP2, 4 racks), sweeping short (4K
+token) and long (24K token) KV contexts for both private and shared
+cache scenarios.\\
+\textit{Dependencies:} none.
+
+\subsection*{F. Artifact Analysis}
+
+Each task group follows a two-script pipeline:
+
+\begin{enumerate}[leftmargin=1.2em]
+  \item \textbf{Experiment script}
+        (\texttt{run\_\{T1$|$T2$|$T3$|$T4\}.py}):
+        drives \tool over the configured parameter sweep, collects raw
+        per-request and aggregate metrics, and writes structured
+        \texttt{.csv} files to \texttt{results/<task>/}.
+  \item \textbf{Plotting script}
+        (\texttt{plot\_\{T1$|$T2$|$T3$|$T4\}.py}):
+        reads those CSVs, applies post-processing (CDFs, normalised
+        tokens/\$, overlaid real-hardware reference points), and writes
+        \texttt{.pdf} figures to \texttt{figures/}.
+        The plotting scripts do not import \toolns, so figures can be
+        regenerated without the simulator installed.
+\end{enumerate}
+
+\noindent Task dependency graph:
+
+\begin{center}
+  T1.1, T1.2, T1.3 $\;\rightarrow\;$ \texttt{plot\_T1.py}
+    $\;\rightarrow\;$ Fig.~4 \\[3pt]
+  T2.1, T2.2 $\;\rightarrow\;$ \texttt{plot\_T2.py}
+    $\;\rightarrow\;$ Fig.~6 \\[3pt]
+  T3.1, T3.2 $\;\rightarrow\;$ \texttt{plot\_T3.py}
+    $\;\rightarrow\;$ Fig.~7, Fig.~8 \\[3pt]
+  T4 $\;\rightarrow\;$ \texttt{plot\_T4.py}
+    $\;\rightarrow\;$ Fig.~10
+\end{center}
+
+\noindent \texttt{run\_all.sh} executes all four experiment scripts
+(sequentially, or concurrently with \texttt{--parallel}) and then all
+four plotting scripts.  \texttt{run\_all.sh --plot-only} regenerates
+every figure from existing results without re-simulating.
+
+\end{document}
