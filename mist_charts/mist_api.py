@@ -1,18 +1,12 @@
 """Single import surface for the MIST simulator.
 
-Every reproduction script imports MIST through this module rather than
-reaching for the simulator package directly, so nothing else in the
-repository has to name it.
-
-The simulator is published as the ``mist`` package
-(github.com/MIST-Simulator/MIST).  Pre-release checkouts installed it
-under the name ``GenA``; this module transparently falls back to that so
-the scripts keep working against an unrenamed local checkout.  ``mist``
-is the name to use everywhere else.
-
-Note that GenZ is a *separate* project (github.com/abhibambhaniya/
-GenZ-LLM-Analyzer), not part of the rename -- it is MIST's underlying
-analytical hardware/model-config library and keeps its own name.
+Every reproduction script imports MIST through this module instead of the
+simulator package directly, so a package rename touches one file. The
+simulator is published as ``mist`` (github.com/MIST-Simulator/MIST);
+pre-release checkouts installed it as ``GenA``, so this module falls back
+to that name transparently. GenZ (github.com/abhibambhaniya/
+GenZ-LLM-Analyzer) is a separate project -- MIST's analytical hardware/
+model-config library -- and keeps its own name.
 """
 
 import importlib
@@ -119,10 +113,8 @@ except ImportError as exc:  # pragma: no cover - surfaced to the reviewer
 
 
 def mist_package_path():
-    """Filesystem root of the installed simulator package.
-
-    Used to reach data that ships inside MIST itself, such as the profiled
-    vLLM runtime tables under ``Platforms/vllm_runtime_data/``.
+    """Filesystem root of the installed simulator package (e.g. to reach
+    the profiled vLLM runtime tables under ``Platforms/vllm_runtime_data/``).
     """
     from pathlib import Path
 

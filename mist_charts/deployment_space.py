@@ -1,15 +1,13 @@
 """Heterogeneous deployment search-space enumerator for T3 (Fig. 7, Fig. 8).
 
-Ported from ``GenA_Paper_charts/SC26/search_deployment_space.py`` (the
-authors' notebook repo), trimmed to the 8 SKUs and TP-in-{1,2} constraint the
-paper's Sec. 5.1 search actually sweeps, and rewired to source prices and the
-SKU universe from :mod:`mist_charts.pricing` instead of a hardcoded dict.
+Ported from ``GenA_Paper_charts/SC26/search_deployment_space.py``, trimmed
+to the 8 SKUs and TP-in-{1,2} constraint the paper's Sec. 5.1 search
+sweeps, and rewired to source prices/SKUs from :mod:`mist_charts.pricing`.
 
-This module is a pure enumerator: it returns a DataFrame describing every
-(hardware, parallelism, batching strategy) combination that fits in device
-memory, annotated with `Cost` and `HW_Combination`. It never builds a
-`PlatformConfig`, `Coordinator`, or otherwise touches the simulator --
-``run_T3.py`` does that with each row.
+Pure enumerator: returns a DataFrame of every (hardware, parallelism,
+batching strategy) combination that fits in device memory, annotated with
+`Cost`/`HW_Combination`. Never touches the simulator -- ``run_T3.py`` does
+that with each row.
 """
 
 import math
@@ -48,23 +46,12 @@ def estimate_memory_required_gb(
     max_context_tokens: int = 128_000,
     kv_kb_per_token: float = 140.0,
 ) -> float:
-    """GB of device memory one model replica needs to be schedulable.
-
-    Ported unmodified from ``experiment_runner.py``'s inline computation:
-    weight memory is `params_in_billions` GB (MIST's ``profiled-ops`` system
-    configs run these SKUs at FP8, i.e. 1 byte/parameter, so this is not a
-    bf16-vs-fp8 bug -- it matches the precision the simulator actually uses),
-    plus a per-request KV-cache reservation sized for a 128K-token practical
-    max context at ~140 KB/token.
-
-    Args:
-        model: HF-style model id containing a "-<N>B" parameter count, e.g.
-            "Qwen/Qwen3-32B".
-        max_context_tokens: KV-cache sizing budget, in tokens.
-        kv_kb_per_token: KV-cache footprint per token, in KB.
-
-    Returns:
-        Estimated GB of device memory needed per model replica.
+    """GB of device memory one model replica needs to be schedulable:
+    `params_in_billions` GB of weights (these SKUs run at FP8 in MIST's
+    ``profiled-ops`` mode, i.e. 1 byte/param -- not a bf16-vs-fp8 bug) plus
+    a per-request KV-cache reservation for `max_context_tokens` at
+    `kv_kb_per_token`. `model` must contain a "-<N>B" parameter count (e.g.
+    "Qwen/Qwen3-32B"). Ported unmodified from `experiment_runner.py`.
     """
     match = re.search(r"-(\d+)B", model)
     if not match:
@@ -80,21 +67,13 @@ def get_parallelism_combinations(
     min_device_per_replica: int = 1,
     max_degree_constraints: Union[Dict[str, int], None] = None,
 ) -> pd.DataFrame:
-    """All (d1, d2, ...) combinations whose product equals `num_devices`.
-
-    Verbatim port of ``search_deployment_space.get_parallelism_combinations``.
-
-    Constraints:
-      1. Product of all degrees equals num_devices (d1 * d2 * ... = N).
-      2. The first two degrees (TP, PP) must be powers of 2; subsequent
-         degrees (DP, etc.) can be any integer factor.
-      3. Product of the first two degrees (TP * PP) >= min_device_per_replica.
-      4. Individual degree value (di) <= max_degree_constraints[degree_name]
-         (if specified).
-
-    Returns:
-        A DataFrame where each row is a valid combination and columns are
-        named according to `parallelism_degree`.
+    """All (d1, d2, ...) combinations whose product equals `num_devices`,
+    one column per `parallelism_degree` entry. Verbatim port of
+    `search_deployment_space.get_parallelism_combinations`. Constraints:
+    product of all degrees == num_devices; the first two degrees (TP, PP)
+    must be powers of 2, later ones (DP, etc.) any integer factor;
+    TP * PP >= min_device_per_replica; each degree <=
+    max_degree_constraints[name] if given.
     """
     if num_devices < 1 or min_device_per_replica < 1:
         print("Error: num_devices and min_device_per_replica must be at least 1.")
@@ -161,22 +140,14 @@ def get_search_space(
     avg_decode_tokens: float = 1024,
 ) -> pd.DataFrame:
     """Enumerate every valid (hardware, parallelism, batching, batch/chunk
-    size) deployment for a cluster of `num_devices` accelerators.
-
-    Ported from ``search_deployment_space.get_search_space``. For
-    ``BatchingMethod.DISAGGREGATED``, the prefill:decode device split is
-    centered on the trace's prompt:decode *token* ratio (`avg_prompt_tokens`
-    / `avg_decode_tokens`) with a +/-4 device margin explored around it --
-    this is what encodes the "prefill-to-decode client ratio" search
-    dimension. All 8 SKUs in `pricing.SKUS` are valid on both the prefill
-    and decode side (unlike the source script's broader SKU list, which
-    excluded a few HW types from one side or the other), so that
-    prefill_hw/decode_hw whitelist check is dropped here.
-
-    Returns:
-        DataFrame with one row per valid config, columns:
-        Batching_Strategy, Hardware, Parallelism, Max_Batch_Size, Chunk_Size,
-        Cost, HW_Combination.
+    size) deployment for a cluster of `num_devices` accelerators. Ported
+    from `search_deployment_space.get_search_space`. For DISAGGREGATED,
+    the prefill:decode device split is centered on the trace's
+    prompt:decode *token* ratio (`avg_prompt_tokens`/`avg_decode_tokens`)
+    with a +/-4 device margin explored around it -- this encodes the
+    "prefill-to-decode client ratio" search dimension. Returns one row per
+    valid config: Batching_Strategy, Hardware, Parallelism, Max_Batch_Size,
+    Chunk_Size, Cost, HW_Combination.
     """
 
     def get_price(config) -> float:

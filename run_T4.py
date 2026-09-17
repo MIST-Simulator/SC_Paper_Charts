@@ -5,17 +5,13 @@ access patterns, on 128 clients (H100:TP2, 256 GPUs total) split across 4
 racks, driven by real per-request sizes from the Azure conversational trace.
 
 Ports ``4. Cache_storage_config_comparisions.ipynb`` (cell 7, 8, 14) and its
-companion module ``Experiments/Memory_Storage_Comparisions.py`` from the
-authors' notebook repo. See the "T4" section of README.md for the two
-places this script deliberately deviates from what that notebook actually
-executed, and why.
-
-NOTE -- paper-vs-artifact conflict on Case D: Table 2 states its DCN link
-runs at 128 GB/s, but the notebook that produced the published figure
-hard-codes 1 GB/s, and only 1 GB/s reproduces it (Case D collapses toward
-Case E/recompute in both "shared" panels). This script defaults to 1 GB/s;
-pass --dcn-bandwidth-gbps 128 to see Case D flip to strictly dominating
-Case C instead. See mist_charts/memory_configs.py for the full writeup.
+companion module ``Experiments/Memory_Storage_Comparisions.py``. See
+docs/FINDINGS.md#t4 for the deviations from that notebook (Case D/E were
+labelled backwards, the notebook's RNG seeding was disabled, and it never
+actually replayed the Azure trace) and the Case D DCN-bandwidth conflict
+that ``--dcn-bandwidth-gbps`` exposes (default 1 GB/s reproduces the
+published figure; 128 GB/s, Table 2's stated value, flips Case D to
+strictly dominate Case C).
 
 Writes:
     results/T4/per_request.csv  -- one row per completed request
@@ -75,15 +71,11 @@ SCENARIOS = ["private", "shared"]
 
 @contextlib.contextmanager
 def _quiet_stdout():
-    """Mute stdout at the file-descriptor level for the sweep's duration.
-
-    MIST's analytical hardware model (GenZ) unconditionally prints a line
-    per batching decision; with ~130 engines x thousands of steps across a
-    multi-threaded sweep that is both unreadable and slow. A plain
-    ``contextlib.redirect_stdout`` per job is not thread-safe (it mutates
-    the shared ``sys.stdout`` attribute), so this redirects the real fd 1
-    once for the whole ThreadPoolExecutor block instead. Status lines
-    printed while this is active go to stderr (see ``run_one_config``).
+    """Mute stdout at the file-descriptor level for the sweep's duration:
+    GenZ prints a line per batching decision, unreadable across ~130
+    engines x thousands of steps, and `contextlib.redirect_stdout` isn't
+    thread-safe for a multi-threaded sweep. Status lines go to stderr
+    instead (see `run_one_config`).
     """
     stdout_fd = sys.stdout.fileno()
     sys.stdout.flush()
@@ -135,13 +127,11 @@ def build_base_stream(
     aggregate_rps: float,
 ) -> List[Dict]:
     """Build the (case-independent) request stream for one (context_len,
-    scenario) pair: real trace-sampled (input_len, output_len) pairs, Poisson
-    arrivals at ``aggregate_rps``, and a per-request "favorite client" drawn
-    from the scenario's access-skew distribution.
-
-    The same stream feeds all five storage architectures for this
-    (context_len, scenario) pair, matching the notebook's design of reusing
-    one request queue across ``memory_configs`` (cell 14's nested loop).
+    scenario) pair: real trace-sampled (input_len, output_len) pairs,
+    Poisson arrivals at `aggregate_rps`, and a per-request "favorite
+    client" from the scenario's access-skew distribution. The same stream
+    feeds all five storage architectures for this pair (cell 14's nested
+    loop in the source notebook).
     """
     scenario_idx = 0 if scenario == "private" else 1
     rng = np.random.default_rng((seed, context_len, scenario_idx))
@@ -406,7 +396,7 @@ def parse_args(argv=None) -> argparse.Namespace:
             "is the same storage tier load-balanced across all 4 racks "
             "instead of 1. Default matches the published figure; pass "
             "--dcn-bandwidth-gbps 128 to see the reversal. See "
-            "mist_charts/memory_configs.py for the full writeup.",
+            "docs/FINDINGS.md#t4 for the full writeup."
         ),
     )
     return parser.parse_args(argv)

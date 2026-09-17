@@ -171,75 +171,15 @@ in this directory.
 
 ## KNOWN_ISSUES: two upstream bugs found while building T1
 
-Both were found and worked around entirely from within `run_T1.py` — no
-files in `MIST` or `GenZ` were modified. Both should be routed to and
-fixed in their respective upstream repos.
+Both found and worked around entirely from within `run_T1.py` — no files
+in `MIST` or `GenZ` were modified. See
+[`docs/FINDINGS.md`](../../../docs/FINDINGS.md#upstream-bugs) for
+the full writeup with code and the upstream fix for each:
 
-### 1. `mist.Engine.LLMEngine` shares its per-step runtime cache across every engine in a process (serious)
-
-`mist/Engine/Mixed_LLM_Engine.py`'s `LLMEngine.__init__` declares:
-
-```python
-def __init__(
-    self, ...,
-    decode_only_cache: Dict[int, Dict[int, tuple]] = {},
-    mixed_batch_cache: Dict[int, Dict[int, tuple]] = {},
-) -> None:
-```
-
-`{}` as a default argument is a classic Python bug: the same dict object
-is created once, at function-definition time, and reused as the default
-for *every* call that doesn't pass its own — meaning every `LLMEngine`
-constructed in the same Python process without explicit
-`decode_only_cache=`/`mixed_batch_cache=` arguments shares (and mutates)
-the same two cache dicts.
-
-**We confirmed this corrupts results.** These caches key purely on
-`(num_decodes, sum_decode_kv)` / `(chunk_size, total_kv)` — not on which
-platform/engine produced the cached value. Constructing three `LLMEngine`s
-back to back in one process (TPU, then H100, then L40S) against the
-*same* request queue, without passing the two cache arguments explicitly,
-produced **bit-for-bit identical per-request latencies across all three
-platforms**, despite completely different models, tensor-parallel degrees,
-and vLLM runtime tables. The second and third engine constructed were
-silently reading back the first engine's cached step times instead of
-querying their own regressor. This would silently corrupt *any*
-multi-platform or multi-configuration study run in one process (a Jupyter
-kernel across notebook cells, a sweep script, etc.) — including,
-plausibly, parts of the original validation notebook this task ported
-from, if it constructed more than one `LLMEngine` per kernel session.
-
-**Workaround (in `run_T1.py`, not in MIST):** every `LLMEngine(...)` call
-here passes fresh `decode_only_cache={}, mixed_batch_cache={}` explicitly.
-
-**Real fix (upstream, in MIST):** change the defaults to `None` and
-allocate a fresh dict inside `__init__` when `None` is passed, e.g.
-`decode_only_cache: Optional[Dict] = None`, then
-`self._decode_only_cache = {} if decode_only_cache is None else decode_only_cache`
-(and the same for `mixed_batch_cache`).
-
-### 2. GenZ `GEMMQuantMode.bfloat16` / `FMHAQuantMode.bfloat16` / `KVCacheQuantMode.bfloat16` / `MoEQuantMode.bfloat16` no longer exist (blocking)
-
-`GenZ/db.py` references `.bfloat16` on four aiconfigurator enums (in the
-module-level `bits_to_gemm_quants` dict, and as default arguments to
-`query_context_attention`, `query_generation_attention`, and
-`query_gemm`/`query_trtllm_alltoall`). The `aiconfigurator` submodule
-version currently pinned by GenZ's own `git submodule` pointer
-(`d5fb9da2e643044a70900eee15739d2fc71eb39c`) renamed `bfloat16` to
-`float16` in `aiconfigurator/src/aiconfigurator/sdk/common.py` (bf16 and
-fp16 are both just the generic 16-bit w16a16 quant mode there now). Since
-GenZ's submodule pointer and its own code disagree, constructing *any*
-GenZ `System(...)` — and therefore any MIST `vLLMPlatformConfig`, for any
-platform — raises `AttributeError: type object 'GEMMQuantMode' has no
-attribute 'bfloat16'` immediately.
-
-**Workaround (in `run_T1.py`, not in GenZ):** `_patch_genz_quant_compat()`
-monkeypatches `enum_cls.bfloat16 = enum_cls.float16` on the four affected
-enum classes, after importing `aiconfigurator.sdk.common` from GenZ's
-vendored submodule path, before importing anything from `MIST`/`mist_api`.
-It's a no-op (skipped) if the enums already have a native `bfloat16`
-member, e.g. once upstream is fixed.
-
-**Real fix (upstream, in GenZ-LLM-Analyzer):** either update
-`GenZ/db.py`'s four `.bfloat16` references to `.float16`, or bump/pin the
-`aiconfigurator` submodule to a commit that still defines `bfloat16`.
+1. `mist.Engine.LLMEngine`'s mutable `{}` default cache arguments are
+   shared across every engine constructed in a process — confirmed to
+   silently corrupt multi-platform runs (worked around in `run_T1.py` by
+   passing fresh dicts explicitly).
+2. GenZ's `GEMMQuantMode.bfloat16` (and FMHA/KVCache/MoE equivalents) no
+   longer exist after an upstream aiconfigurator rename, blocking every
+   `System(...)` construction (worked around by `_patch_genz_quant_compat`).

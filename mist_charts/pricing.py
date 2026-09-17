@@ -1,35 +1,24 @@
 """Per-accelerator hourly rental prices and vendor grouping for T3 (Fig. 7, Fig. 8).
 
-Declarative data only, module-level, mirroring the pattern in
-``mist_charts/memory_configs.py``: ``run_T3.py`` reads ``PRICE_PER_HOUR`` to
-cost every deployment_space row, and ``plot_T3.py`` reads
-``VENDOR_COLORS`` / ``VENDOR_MARKERS`` / ``VENDOR_CATEGORY_ORDER`` /
-``VENDOR_LEGEND_ORDER`` / ``PERFORMANCE_SCALE_FACTOR`` so the Fig. 7 scatter
-plots, the Fig. 8 bar chart, and the README's hardware table all agree with
-each other. There is exactly one place that encodes "what vendor does this
-SKU belong to, what price does it rent for, and what throughput-scaling
-correction applies".
+Declarative data only: ``run_T3.py`` reads ``PRICE_PER_HOUR`` to cost every
+deployment_space row, and ``plot_T3.py`` reads ``VENDOR_COLORS`` /
+``VENDOR_MARKERS`` / ``VENDOR_CATEGORY_ORDER`` / ``VENDOR_LEGEND_ORDER`` /
+``PERFORMANCE_SCALE_FACTOR`` for the Fig. 7/8 plots and the README's
+hardware table, so there is exactly one place that encodes vendor, price,
+and scale-factor per SKU. Ported from ``GenA_Paper_charts/SC26/
+plot_sc_results.py``'s ``DEFAULT_PRICES`` / ``PERFORMANCE_SCALE_FACTOR``,
+restricted to the paper's Sec. 5.1 8-SKU hardware table.
 
-Prices and the performance scale factor are ported from
-``GenA_Paper_charts/SC26/plot_sc_results.py``'s ``DEFAULT_PRICES`` /
-``PERFORMANCE_SCALE_FACTOR`` (the script confirmed to have produced the
-paper's camera-ready Fig. 7/8), restricted to the 8 SKUs in the paper's
-Sec. 5.1 hardware table.
-
-KNOWN CONFLICT (report, don't silently pick one and hide it): the same
-repo's ``SC26/experiment_runner.py`` hardcodes a *different* internal
-search-space price table (mi350x $2.75, mi355x $2.95, tpu_v6e $1.89,
-tpu_v7 $3.50 -- vs. ``DEFAULT_PRICES``' $7.50 / $9.50 / $3.00 / $8.00 used
-here). ``DEFAULT_PRICES`` matches the paper's stated Nov-2025 rental prices
-(Sec. 5.1) and is what the plotting scripts that produced the published
-figures actually used for cost/tokens-per-$, so this module uses
-``DEFAULT_PRICES``, not ``experiment_runner.py``'s figures.
+``DEFAULT_PRICES`` conflicts with ``experiment_runner.py``'s own internal
+search-space price table; this module uses ``DEFAULT_PRICES`` (matches the
+paper's stated Nov-2025 rental prices and what the figures actually used).
+See docs/FINDINGS.md#t3 ("Price table conflict") for both tables.
 """
 
 from typing import Dict, List
 
-# $ / accelerator / hour, sampled November 2025. Matches plot_sc_results.py's
-# DEFAULT_PRICES restricted to our 8 SKUs -- see the "KNOWN CONFLICT" note above.
+# $ / accelerator / hour, sampled November 2025. See module docstring for
+# the conflicting experiment_runner.py price table.
 PRICE_PER_HOUR: Dict[str, float] = {
     "h200_sxm": 6.31,
     "b200_sxm": 8.60,
@@ -130,36 +119,19 @@ def parse_hardware(hardware: str, is_disaggregated: bool):
 def is_multi_vendor_config(hardware: str, is_disaggregated: bool) -> bool:
     """True iff the prefill and decode SKUs resolve to different vendors.
 
-    This is plot_sc_results.py's `is_multi_vendor` -- narrower than
-    `vendor_of_config`'s "Mixed" (which also covers a same-vendor pairing of
-    two *different* SKUs). Fig. 8's bar chart (plot_bar_results.py) uses
-    this narrower definition for its "Mixed" bar; Fig. 7's scatter
-    (plot_sc_results.py) uses the broader one. That is an inconsistency in
-    the ported source, preserved faithfully -- see plot_T3.py's docstring.
+    Narrower than `vendor_of_config`'s "Mixed"; used for Fig. 8's bar
+    chart, where `vendor_of_config` is used for Fig. 7's scatter. See
+    docs/FINDINGS.md#t3 ("Fig. 7 vs. Fig. 8 'Mixed' category inconsistency").
     """
     prefill_sku, decode_sku, _ = parse_hardware(hardware, is_disaggregated)
     return VENDOR_OF_SKU[prefill_sku] != VENDOR_OF_SKU[decode_sku]
 
 
 def vendor_of_config(hardware: str, is_disaggregated: bool) -> str:
-    """Vendor/category group for one `deployment_space.get_search_space` row.
-
-    Port of plot_sc_results.py's `assign_category`: 'Mixed' if the prefill
-    and decode SKUs are on different vendors OR simply different SKUs (a
-    same-vendor pairing of two different SKUs, e.g. h200_sxm+b200_sxm, both
-    Nvidia, still counts as Mixed here) -- i.e. 'Mixed' unless prefill_sku
-    == decode_sku exactly. See `is_multi_vendor_config` for the narrower
-    definition Fig. 8's bar chart uses instead.
-
-    Args:
-        hardware: The row's ``Hardware`` value -- a single SKU (e.g.
-            ``"h200_sxm"``) for chunked/continuous configs, or
-            ``"<prefill_sku>-<decode_sku>"`` for disaggregated configs.
-        is_disaggregated: Whether the row's ``Batching_Strategy`` is
-            ``BatchingMethod.DISAGGREGATED``.
-
-    Returns:
-        One of ``VENDOR_CATEGORY_ORDER``.
+    """Vendor/category group for one `deployment_space.get_search_space` row:
+    'Mixed' unless prefill_sku == decode_sku exactly (broader than
+    `is_multi_vendor_config`, which requires different *vendors* -- see
+    docs/FINDINGS.md#t3). Returns one of `VENDOR_CATEGORY_ORDER`.
     """
     prefill_sku, decode_sku, is_hetero = parse_hardware(hardware, is_disaggregated)
     if is_hetero:

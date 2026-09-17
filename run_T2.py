@@ -3,51 +3,16 @@
 validation.
 
   (a) Per-step forward-pass runtime: MIST vs Vidur vs real vLLM, for
-      Llama-2-70B on H100 at tensor-parallel degree 4 and 8.
-
-      The paper's §4.1.1 ("LLM Client HW Executor") defines MIST's per-step
-      runtime model as *ML-based*: an ensemble of regressors trained on
-      profiled vLLM data (input size, batch size, chunk size, TP degree),
-      not the GenZ analytical roofline. §4.2's validation subsection is
-      explicitly scoped to "our ML-Based LLM Cluster Modeling (§4.1.1)".
-      Accordingly, MIST here is ``vLLMPlatformConfig``
-      (mist/Platforms/vllm_platform.py) -- the lookup + RandomForest-ensemble
-      predictor over profiled vLLM data -- pointed at the vendored profiled
-      CSVs under data/validation/T2/. It is *not* the plain
-      ``PlatformConfig`` GenZ analytical path (see "Known upstream issues"
-      below): that path is what MIST falls back to for hypothetical,
-      unprofiled hardware (§5.1: Etched, GB300, TPUv7), never the claimed
-      basis for this figure.
-
-      To avoid a tautological "fit and evaluate on the same rows" result,
-      each hardware/stage is split by whole (total_batches, total_tokens)
-      groups: a seeded `--holdout-frac` (default 0.2) of the *groups* is
-      held out entirely, vLLMPlatformConfig's ensemble is fit only on the
-      remaining (non-held-out) rows, and every held-out row is scored by
-      calling `get_chunked_time` on it. Because grouping is exact-equality
-      on (total_batches, total_tokens) -- the same key vLLMPlatformConfig's
-      own near-exact lookup (`_search_vllm_df`) matches on -- no held-out
-      row's configuration exists anywhere in the training data, so
-      evaluation always falls through to the (held-out) regressor rather
-      than an exact-match lookup. Vidur -- itself an ML predictor trained on
-      profiling data, per the paper -- gets the *same* group-holdout
-      protocol applied to its own baseline CSV, so the comparison is
-      apples-to-apples: its RandomForestRegressor surrogate (see
-      data/validation/T2/README.md for why a surrogate is needed at all --
-      Vidur's own scheduler produces a different set of steps than vLLM's)
-      is fit only on Vidur rows outside the held-out groups, then evaluated
-      on the same held-out real-vLLM rows MIST is scored on.
-
-      Known upstream issues (see data/validation/T2/README.md for the full
-      writeup): (1) the GenZ analytical path (`PlatformConfig.get_chunked_time`)
-      hardcodes `bits='fp8'` in 5 places in mist/Platforms/platforms.py with
-      no dtype parameter exposed on `PlatformConfig.__init__`, which
-      underpredicts bf16/fp16 vLLM latency by roughly 2-3x -- a real bug,
-      but not the mechanism §4.2 / Fig. 6(a) uses, per the paper text above.
-      (2) `PlatformConfig(device="h100_sxm", ...)` (the profiled-ops/System
-      path) currently crashes in this environment's GenZ checkout with
-      `AttributeError: type object 'GEMMQuantMode' has no attribute
-      'bfloat16'` in GenZ/db.py -- an independent upstream GenZ bug.
+      Llama-2-70B on H100 at tensor-parallel degree 4 and 8. MIST here is
+      ``vLLMPlatformConfig`` (lookup + RandomForest ensemble over profiled
+      vLLM data), the ML-based model the paper's Sec. 4.1.1/4.2 validates --
+      not the GenZ analytical ``PlatformConfig`` path. Each hardware/stage
+      is scored on a seeded held-out split of (total_batches, total_tokens)
+      groups so evaluation never falls back to an exact-match lookup on
+      training data; Vidur gets the same protocol on its own baseline CSV
+      for an apples-to-apples comparison. See docs/FINDINGS.md#t2 for the
+      full methodology and the two known upstream GenZ issues this
+      sidesteps (fp8-hardcoded PlatformConfig, GEMMQuantMode.bfloat16).
 
   (b) KV cache retrieval latency: MIST vs `fio`-measured latency, for NVMe
       SSD and DDR4, sequential reads, block sizes 256 KB - 1 GB, using a
@@ -180,14 +145,9 @@ def _split_stages(df):
 
 def _held_out_groups(stage_df, holdout_frac, seed):
     """Pick a seeded, deterministic subset of whole (total_batches,
-    total_tokens) groups to hold out entirely -- not individual rows.
-
-    vLLMPlatformConfig's near-exact lookup (`_search_vllm_df`) matches rows
-    by exact (total_tokens, total_batches) equality. Holding out whole
-    groups (rather than i.i.d. rows, which could leave a training row with
-    the identical group key as a held-out row) guarantees the evaluation
-    predictor can never fall back to memorized lookup for a held-out
-    configuration -- it must generalize via the fitted ensemble.
+    total_tokens) groups to hold out entirely -- not individual rows, since
+    vLLMPlatformConfig's near-exact lookup matches on that same key (see
+    docs/FINDINGS.md#t2).
     """
     groups = sorted(set(zip(stage_df["total_batches"], stage_df["total_tokens"])))
     order = np.random.RandomState(seed).permutation(len(groups))
@@ -267,12 +227,8 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
             vidur_train_df, _ = _split_by_groups(vidur_stage_df, holdout_groups)
             vidur_train_dfs[stage] = vidur_train_df
 
-        # MIST = vLLMPlatformConfig: the paper's ML-based per-step predictor
-        # (an ensemble/lookup over profiled vLLM data), fit only on the
-        # non-held-out rows written to a scratch CSV in the original trace
-        # format, so `_search_vllm_df`'s near-exact lookup and the fallback
-        # RandomForestRegressor are both trained without seeing any held-out
-        # group.
+        # Fit vLLMPlatformConfig only on non-held-out rows, written to a
+        # scratch CSV in the original trace format.
         train_full_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame(columns=_RAW_COLUMNS)
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".csv", prefix="mist_t2_train_", delete=False
@@ -291,10 +247,9 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
                     print(f"  [{stage}] skipped (no rows)")
                     continue
 
-                # Vidur baseline: fit a small regressor on Vidur's own
-                # non-held-out rows (see data/validation/T2/README.md for why
-                # a surrogate is needed at all), then evaluate on the same
-                # held-out real-vLLM rows MIST is scored on.
+                # Vidur baseline: fit a surrogate regressor on Vidur's own
+                # non-held-out rows, then evaluate on the same held-out
+                # real-vLLM rows MIST is scored on (docs/FINDINGS.md#t2).
                 vidur_train_df = vidur_train_dfs[stage]
                 vidur_predictor = RandomForestRegressor(n_estimators=100, random_state=seed)
                 vidur_predictor.fit(vidur_train_df[FEATURE_COLUMNS], vidur_train_df["Time (ms)"])

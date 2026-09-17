@@ -76,30 +76,20 @@ series are compared on an apples-to-apples, no-leakage basis.
 ## Known upstream issues (informational — not the mechanism used above)
 
 While investigating a first (incorrect) draft of this reproduction that used
-`PlatformConfig.get_chunked_time()` (the GenZ analytical roofline) as
-"MIST" for Figure 6(a), two independent upstream issues were found. Neither
+`PlatformConfig.get_chunked_time()` (the GenZ analytical roofline) as "MIST"
+for Figure 6(a), two independent upstream issues were found — neither
 affects the numbers above (which use `vLLMPlatformConfig`, per the paper's
-own description of Fig. 6(a)'s methodology), but both are real and worth
-tracking:
+own description of Fig. 6(a)'s methodology). Full writeup, including the
+~2-3x underprediction measurement and the exact crash, in
+[`docs/FINDINGS.md`](../../../docs/FINDINGS.md#t2):
 
-1. **`PlatformConfig` hardcodes `bits='fp8'`.** `mist/Platforms/platforms.py`
-   passes `bits='fp8'` into every `chunked_moddeling`/`System(...)` call
-   (lines 78, 276, 323, 361, 379), and `PlatformConfig.__init__` exposes no
-   dtype parameter to override it. Manually forcing `bf16` on one sample
-   request (Llama-2-70B, TP4, 391-token prefill) roughly doubled the
-   predicted latency (12.6 ms → 23.4 ms fp8→bf16, vs. 39.1 ms measured),
-   which plausibly explains most of the ~2-3x systematic underprediction
-   this path produces against real bf16/fp16 vLLM runs. This path is what
-   the paper uses for *hypothetical, unprofiled* hardware in §5.1 (Etched,
-   GB300, TPUv7) where no profiled vLLM data exists to fit an ensemble —
-   it was never the claimed basis for Fig. 6(a).
-2. **`PlatformConfig(device="h100_sxm", ...)` (the profiled-ops/`System`
-   path) crashes in this environment's GenZ checkout** with
-   `AttributeError: type object 'GEMMQuantMode' has no attribute
-   'bfloat16'` in `GenZ/db.py` (`bits_to_gemm_quants` maps `'bf16' ->
-   GEMMQuantMode.bfloat16`, but the enum only defines `float16`). This
-   blocks the more detailed profiled-hardware device path entirely,
-   independent of the `fp8` issue above.
+1. `PlatformConfig` hardcodes `bits='fp8'` in five places in
+   `mist/Platforms/platforms.py`, with no dtype override exposed — this is
+   the path the paper uses for hypothetical, unprofiled hardware (§5.1),
+   never the basis for Fig. 6(a).
+2. `PlatformConfig(device="h100_sxm", ...)` crashes in this environment's
+   GenZ checkout with an `AttributeError` on `GEMMQuantMode.bfloat16` (same
+   upstream rename as T1's `_patch_genz_quant_compat`).
 
 ## KV cache retrieval latency baseline (Figure 6b)
 

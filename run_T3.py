@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Reproduce Fig. 7(a)-(b) and Fig. 8 of the MIST SC26 paper: heterogeneous
 hardware / parallelism / batching design-space search for Qwen3-32B, for two
-use cases built from the SAME GitHub-Code trace (see "TRACE / SLO SOURCE OF
-TRUTH" below) -- "chat conversation" (that trace without KV retrieval,
-TTFT P99 < 200 ms) and "code generation, high prefix-KV reuse" (a seeded
-shuffle of the same trace, with KV retrieval, TTFT P99 < 1.5 s) --
-optimizing generated tokens/s/$ among SLO-meeting configs.
+use cases built from the SAME GitHub-Code trace -- "chat conversation" (that
+trace without KV retrieval, TTFT P99 < 200 ms) and "code generation, high
+prefix-KV reuse" (a seeded shuffle of the same trace, with KV retrieval,
+TTFT P99 < 1.5 s) -- optimizing generated tokens/s/$ among SLO-meeting
+configs.
 
   Fig. 7(a)  figures/Chat_search_results.pdf              (plot_T3.py)
   Fig. 7(b)  figures/Code_Generation_KV_search_results.pdf (plot_T3.py)
@@ -20,53 +20,12 @@ disaggregated} batching x prefill:decode client ratio, at 100 RPS on up to
 ``mist_charts/deployment_space.py``; this script drives the simulator over
 that enumeration.
 
-*** TRACE / SLO SOURCE OF TRUTH (commit aac3254, "SC Paper Charts") ***
-An earlier version of this script used narrativeqa.csv for "chat" (per the
-original task spec) and found essentially no configuration could meet a
-250ms TTFT SLO -- correct given that trace's ~58K-token mean context, but
-it turned out to be the wrong input. ``GenA_Paper_charts/SC26/plot_sc_results.py``
-and ``plot_bar_results.py`` (confirmed by the author as the scripts that
-produced the camera-ready Fig. 7/8) read exactly two CSVs, both derived
-from the *code-generation* trace:
-    Chat_search_results.pdf              <- Code_Generation_KV.csv, WITHOUT
-                                             KV retrieval, slo_ms=200
-    Code_Generation_KV_search_results.pdf <- a shuffled copy of the same
-                                             trace, WITH KV retrieval,
-                                             slo_ms=1500
-narrativeqa.csv is not used for Fig. 7/8 at all. This is why both use cases
-below point at ``code_generation_kv.csv``, differing only in
-``kv_retrieval`` and a seeded shuffle (see ``_seeded_shuffle_trace``).
-Also note the "chat" SLO used here is **200ms**, not the 250ms stated in
-the paper's Sec. 5.1 -- that is what the plotting code that made the figure
-actually uses; the discrepancy is reported, not silently resolved.
-
-*** Runtime-backend substitution (read this before comparing numbers) ***
-The paper's DSE used Nvidia's AIConfigurator as a single LLM-cluster runtime
-backend shared by every SKU, specifically for an apples-to-apples hardware
-comparison. The open MIST package (this repo's ``MIST``) has no standalone
-AIConfigurator LLM-cluster simulator class. Instead, every SKU here runs
-through MIST's own ``PlatformConfig`` -> GenZ ``System``, which (for these 8
-SKUs, all configured with ``compute_engine="profiled-ops"``) happens to look
-up its own per-operator (GEMM / attention / collective) timings from that
-very same aiconfigurator silicon database -- but layers MIST's own
-event-driven request queueing, batching, and (for disaggregated configs)
-prefill/decode orchestration on top, rather than AIConfigurator's own
-cluster-level simulator. So every SKU here *is* still scored by one
-consistent backend, which is the property the paper's DSE actually needs --
-but the serving-level simulation is MIST's, not AIConfigurator's. Expect
-absolute tokens/$ numbers to differ from the published figure even though
-the search + SLO filter + tokens/s/$ optimization procedure is identical.
-
-*** Environment compatibility shim (see _patch_aiconfigurator_quant_enum_compat) ***
-The aiconfigurator submodule commit currently vendored under the GenZ
-dependency renamed ``GEMMQuantMode.bfloat16`` (and its FMHA/KVCache/MoE
-equivalents) to ``float16``, but mist/GenZ's ``db.py`` -- a dependency this
-repository does not own or edit -- still references the old name, so
-constructing a ``PlatformConfig`` for any of these 8 SKUs raises
-``AttributeError`` before this patch runs. The patch below aliases the old
-enum member back onto the already-imported third-party class at runtime; it
-edits no file on disk. Remove it once GenZ's ``db.py`` or the pinned
-aiconfigurator submodule catches up.
+Both use cases read code_generation_kv.csv, not narrativeqa.csv, and
+"chat"'s SLO is 200ms rather than the paper's stated 250ms -- both match
+the plotting code confirmed to have produced the camera-ready figures, not
+a mistake. See docs/FINDINGS.md#t3 for the full trace/SLO writeup, the
+AIConfigurator-vs-MIST runtime-backend substitution, the gb300 database
+fallback below, and the chunked_moddeling failures on long decode contexts.
 
 Writes (via ``mist_charts.paths.result_path("T3", ...)``, or ``--output``):
     <out>/<use_case>_search_space.csv  -- every enumerated config (pre-subset)
@@ -92,12 +51,11 @@ import pandas as pd
 
 
 def _patch_aiconfigurator_quant_enum_compat() -> None:
-    """Runtime monkeypatch for a GenZ/aiconfigurator version-skew bug.
-
-    See the module docstring's "Environment compatibility shim" section.
-    Touches only already-imported third-party module objects in this
-    process; no file on disk is modified. A no-op if GenZ/aiconfigurator
-    are unavailable or already compatible.
+    """Alias GEMMQuantMode.bfloat16 (and FMHA/KVCache/MoE) back onto the
+    already-imported aiconfigurator enums; GenZ/db.py still references the
+    pre-rename name. See docs/FINDINGS.md ("GenZ GEMMQuantMode rename").
+    No-op if GenZ/aiconfigurator are unavailable or already compatible;
+    edits no file on disk.
     """
     try:
         import GenZ
@@ -128,28 +86,11 @@ _BACKEND_FALLBACK_ORDER = ("vllm", "trtllm", "sglang")
 
 def _patch_runtime_db_backend_fallback() -> None:
     """TEMPORARY shim: fall back to another backend's database when a SKU's
-    vLLM one is missing or incomplete. Remove once MIST threads a `backend`
-    parameter through `System` -- see KNOWN ISSUES in the module docstring.
-
-    ``GenZ/system.py`` constructs ``RuntimeDB(hardware=...)`` without passing
-    ``backend``, so it always resolves ``backend='vllm'``. For gb300 that
-    database ships an ``INCOMPLETE.txt`` ("context_attention_perf.txt is
-    incomplete, most data points failed in collection"), so
-    ``get_latest_database_version`` returns None, ``get_database`` returns
-    None, and every gb300 configuration dies with
-    ``'NoneType' object has no attribute 'system_spec'``. That silently drops
-    a third of the paper's Nvidia SKUs from the search.
-
-    gb300 does ship a complete ``trtllm/1.2.0rc6.post3`` database -- the same
-    ten files as the h200_sxm TRT-LLM database that already works.
-
-    Switching backend does NOT bias the comparison. MIST runs the database in
-    ``DatabaseMode.SOL``, the roofline estimator the paper specifies in
-    Sec. 5.1 ("ensuring all HW SKUs are modeled with the same backend and
-    based on their raw capabilities"). In SOL mode the measured per-operator
-    tables are not used for timing; the database supplies only the hardware's
-    ``system_spec``. So this changes which file gb300's spec sheet is read
-    from, not how fast gb300 is modeled.
+    vLLM one is missing or incomplete (gb300's ships INCOMPLETE.txt, which
+    otherwise crashes every gb300 config). Safe because MIST runs the
+    database in DatabaseMode.SOL, where it supplies only system_spec, not
+    timing. Remove once MIST threads a `backend` param through `System`.
+    See docs/FINDINGS.md#t3 ("Runtime-DB backend fallback for gb300").
     """
     try:
         from GenZ import db as genz_db
@@ -206,13 +147,9 @@ from mist_charts.pricing import PRICE_PER_HOUR, SKUS, vendor_of_config  # noqa: 
 
 MODEL = "Qwen/Qwen3-32B"
 
-# Both use cases are driven from the same base trace file; "chat" reads it
-# unshuffled and without KV retrieval, "codegen" reads a seeded shuffle of
-# it with KV retrieval attached (see the module docstring and
-# `_seeded_shuffle_trace`). ttft_slo_ms values match plot_sc_results.py's
-# main() call sites exactly (200ms for the wo_KV/"chat" case, 1500ms for
-# the KV/"codegen" case) -- the 200ms figure is the plotting code's number,
-# not the paper's stated 250ms (Sec. 5.1); both are reported, not merged.
+# "chat" reads the base trace unshuffled, without KV retrieval; "codegen"
+# reads a seeded shuffle of it (_seeded_shuffle_trace), with KV retrieval.
+# See the module docstring for why both share this trace and the 200ms SLO.
 BASE_TRACE_FILE = "code_generation_kv.csv"
 USE_CASES: Dict[str, Dict] = {
     "chat": dict(trace_file=BASE_TRACE_FILE, ttft_slo_ms=200.0, kv_retrieval=False, shuffle=False),
@@ -220,46 +157,20 @@ USE_CASES: Dict[str, Dict] = {
 }
 
 # Trace column semantics (confirmed authoritative by the paper's author):
-# ContextTokens = new prefill tokens, GeneratedTokens = decode tokens, and
-# (codegen only) KV_Tokens = past_context, i.e. reused prefix KV -- never
-# treated as prefill. This is exactly what `build_request_queue` below does
-# (PoissonDistribution reads ContextTokens / GeneratedTokens as
-# input_len / output_len; the kv_retrieval branch attaches KV_Tokens as
-# req.past_context), matching GenA_Paper_charts/SC26/experiment_runner.py's
-# request construction, which is the confirmed reference implementation for
-# this sweep's per-request setup (not its search-space/model/HW defaults --
-# see below).
+# ContextTokens/GeneratedTokens are prefill/decode tokens; KV_Tokens
+# (codegen only) is reused prefix KV, attached as req.past_context, never
+# as prefill. Matches experiment_runner.py's request construction.
 #
-# HARDWARE LIST DISCREPANCY (report, don't silently follow): the version of
-# experiment_runner.py that shipped with commit aac3254 restricts
-# HW_available to mi300x/mi350x/mi355x/tpu_v6e/tpu_v7 -- a 5-SKU list with
-# no Nvidia or Etched SKUs at all, which cannot produce the published
-# Fig. 8 (it has Nvidia and Etched bars). This script instead uses the
-# paper's Sec. 5.1 eight-SKU list (mist_charts.pricing.SKUS: h200_sxm,
-# b200_sxm, gb300, etched, mi350x, mi355x, tpu_v6e, tpu_v7), which is what
-# Fig. 8 needs. Price conflicts between experiment_runner.py's internal
-# search prices and the prices actually used for cost/tokens-per-$ are
-# documented in mist_charts/pricing.py.
-#
-# RUN-CONFIG DISCREPANCY: aac3254's experiment_runner.py also moved its
-# defaults to model=meta-llama-3.1-70B, num_requests=10000, TP<=4 -- that
-# is the author's current, in-progress iteration, not the configuration
-# that produced the camera-ready figures. The filenames the plotting
-# scripts actually read (`... - 100RPS - Qwen3-32B - 60sec - 200reqs.csv`)
-# pin down the configuration used here instead: Qwen3-32B, 100 RPS, 60s
-# sim window, 200 requests, TP in {1,2} (this script's --rps/--sim-time/
-# --num-requests defaults, and deployment_space's max_degree_constraints).
+# The 8-SKU list and 100RPS/200req/TP<=2 run config here are the paper's
+# Sec. 5.1 configuration, not aac3254's experiment_runner.py defaults
+# (a 5-SKU list with no Nvidia/Etched, and an in-progress 10000-request
+# iteration) -- see docs/FINDINGS.md#t3 ("Hardware list and run-config
+# discrepancies").
 
-# Qwen3-32B's native max context, less a safety margin for decode-time
-# growth. This clip is inherited from an earlier iteration of this script
-# that used narrativeqa.csv (mean context 57,782 tokens); it is effectively
-# inert now that both use cases read code_generation_kv.csv (max
-# ContextTokens 18,517, always well under this clip), but it is left in
-# place as a defensive guard against MISTCoordinatorDisagg's hardcoded
-# SchedulerConfig max_total_tokens_per_sample=128_000 (Coordinator/
-# Splitwise_Coordinator.py, a vendored dependency this repo does not edit),
-# which silently drops (FINISHED_IGNORED) any longer request, in case a
-# future --output/trace override needs it again.
+# Effectively inert now that both use cases read code_generation_kv.csv
+# (max ContextTokens 18,517); left as a defensive guard against
+# MISTCoordinatorDisagg's hardcoded max_total_tokens_per_sample=128_000,
+# which silently drops any longer request.
 MAX_CONTEXT_TOKENS = 120_000
 
 
@@ -275,15 +186,11 @@ RESULT_COLUMNS = [
 
 @contextlib.contextmanager
 def _quiet_stdout():
-    """Mute stdout at the file-descriptor level for the sweep's duration.
-
-    MIST's analytical hardware model (GenZ) and coordinator unconditionally
-    print a line per batching decision / per second of simulated time; with
-    a multi-threaded sweep of hundreds of configs that is both unreadable
-    and slow. A plain ``contextlib.redirect_stdout`` per job is not
-    thread-safe (it mutates the shared ``sys.stdout`` attribute), so this
-    redirects the real fd 1 once for the whole ThreadPoolExecutor block
-    instead. Status lines printed while this is active go to stderr.
+    """Mute stdout at the file-descriptor level for the sweep's duration:
+    MIST/GenZ print a line per batching decision / simulated second,
+    unreadable across a multi-threaded sweep of hundreds of configs, and
+    `contextlib.redirect_stdout` isn't thread-safe. Status lines go to
+    stderr instead.
     """
     stdout_fd = sys.stdout.fileno()
     sys.stdout.flush()
@@ -317,15 +224,10 @@ def _clip_request_queue(req_queue: List, max_context_tokens: int = MAX_CONTEXT_T
 
 
 def _seeded_shuffle_trace(trace_path: Path, seed: int) -> Path:
-    """Seeded port of GenA_Paper_charts/SC26/randomize_csv.py.
-
-    The source script shuffles Code_Generation_KV_random.csv in place with
-    `df.sample(frac=1)` -- no random_state, so it is not reproducible run
-    to run. This port adds `random_state=seed` (documented deviation) and
-    writes the shuffled copy to a temp file rather than a repo-tracked
-    "_random" CSV, so nothing not explicitly owned by this task gets
-    created on disk; the temp file is deterministic given `seed` and is
-    regenerated (not reused) on every invocation.
+    """Seeded port of GenA_Paper_charts/SC26/randomize_csv.py, which
+    shuffled in place with an unseeded `df.sample(frac=1)`. This adds
+    `random_state=seed` and writes to a regenerated temp file instead of a
+    repo-tracked "_random" CSV.
     """
     import tempfile
 
@@ -371,13 +273,10 @@ def _row_prefill_decode(row) -> tuple:
 
 
 def build_serving_name(row) -> str:
-    """Unique, human-readable id for one search-space row.
-
-    Unlike the ported scripts' scheduler-config name (which only encodes
-    batching method + client counts, and can collide across different
-    hardware/TP choices that happen to produce the same client count), this
-    embeds every field distinguishing a row, so the (UseCase, Serving Name)
-    resumability key below is unambiguous.
+    """Unique, human-readable id for one search-space row: embeds every
+    field distinguishing it (unlike the ported scripts' scheduler-config
+    name, which can collide across different hardware/TP choices), so the
+    (UseCase, Serving Name) resumability key is unambiguous.
     """
     return (
         f"{row['Hardware']}|{row['Parallelism']}|{row['Batching_Strategy'].name}"
@@ -487,26 +386,15 @@ def select_fast_eval_subset(df: pd.DataFrame, target_n: int = 150) -> pd.DataFra
 def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -> Dict:
     """Simulate one deployment_space row and summarize the result.
 
-    Ports `run_simulation` from ISCA26/Batching_method_comparisions.py,
-    inlined and simplified for T3's fixed PP=1 / TP in {1,2} search: builds
-    the coordinator directly from the row's Hardware/Parallelism instead of
-    going through that module's `UsecaseExperimentConfig` /
-    `schedulerExperimentConfigs` indirection layer.
-
-    Unlike the ported scripts (which persist full per-request length/latency
-    lists to CSV, later re-parsed by plot_sc_results.py's `_flatten` /
-    `compute_ttft_percentiles`), only scalar summary columns are returned:
-    the percentiles are computed here, directly from the live simulator
-    objects, using the exact same definition -- flatten and merge TTFT from
-    every *ongoing* request still in `engine.scheduler.running` at
-    simulation end (`req.data[0]` already populated, i.e. it has a first
-    token, but the request itself hasn't finished) together with TTFT from
-    every *completed* request, then take percentiles over the union. A
-    TTFT-only-from-completed-requests computation (this script's first
-    iteration) systematically *understates* P99 for saturated/overloaded
-    configs, where most in-flight requests never finish inside the sim
-    window; this is the correctness fix the author's confirmed reference
-    (compute_ttft_percentiles) requires.
+    Inlined port of `run_simulation` (ISCA26/Batching_method_comparisions.py)
+    for T3's fixed PP=1 / TP in {1,2} search, building the coordinator
+    directly from the row instead of that module's config-indirection layer.
+    TTFT percentiles are computed here (not via a persisted per-request CSV)
+    from the union of *ongoing* requests still in `engine.scheduler.running`
+    (which already have a first token, `req.data[0]`) and *completed*
+    requests -- matching plot_sc_results.py's `compute_ttft_percentiles`.
+    Completed-only would understate P99 for saturated configs, where most
+    in-flight requests never finish inside the sim window.
     """
     req_queue = deepcopy(base_req_queue)
     is_disagg = row["Batching_Strategy"] == BatchingMethod.DISAGGREGATED
@@ -567,15 +455,9 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
 
     coordinator.run_sim()
 
-    # Port of plot_sc_results.py's compute_ttft_percentiles(Ongoing_TTFT_
-    # latencies, TTFT_latencies): merge TTFT from requests still mid-decode
-    # (ongoing) with TTFT from fully completed requests, then take
-    # percentiles over the union. See run_one_config's docstring.
-    # NOTE: `.GenA_engines` (not `.engines`) is an instance attribute baked
-    # into the simulator's own Coordinator class, not something an
-    # import-level MIST rename alias can cover -- it still carries the
-    # pre-release name and will need updating here if/when the simulator
-    # renames it upstream.
+    # `.GenA_engines`: an instance attribute baked into the simulator's own
+    # Coordinator class (not covered by the mist/GenA import-alias rename);
+    # update here if/when the simulator renames it upstream.
     ongoing_ttft = [
         req.data[0].finished_time - req.metrics.arrival_time
         for engine in coordinator.GenA_engines
@@ -613,16 +495,12 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
         "rps": stats.rps,
         **percentiles,
         "output_throughput": stats.output_throughput,
-        # NOTE: for KV-retrieval (codegen) rows this can come out negative.
-        # MIST's EngineMetrics.total_token_throughput sums
-        # (input_len - past_context - remaining_prefill_tokens) per
-        # request, which is meant to count "newly processed" prompt tokens
-        # for a request mid-decode, but is negative whenever past_context
-        # (KV_Tokens, often tens of thousands) exceeds input_len (a few
-        # hundred, for this trace) -- an upstream accounting quirk, not a
-        # bug in this script. `tokens_per_dollar` below is computed from
-        # `output_throughput` (generated tokens/s only) instead, matching
-        # the paper's actual objective, so it is unaffected.
+        # Can be negative for KV-retrieval (codegen) rows: MIST's
+        # total_token_throughput sums (input_len - past_context -
+        # remaining_prefill_tokens), which goes negative once past_context
+        # (KV_Tokens) exceeds input_len -- an upstream accounting quirk.
+        # tokens_per_dollar (below) uses output_throughput instead, so it's
+        # unaffected.
         "total_token_throughput": stats.total_token_throughput,
         "tokens_per_dollar": tokens_per_dollar,
         "num_completed": len(coordinator.completed_requests),

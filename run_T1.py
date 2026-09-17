@@ -1,37 +1,20 @@
 #!/usr/bin/env python3
 """Reproduces MIST SC26 Fig. 4(a-d): end-to-end latency validation.
 
-Simulates the same 100-request ShareGPT workload on three platforms:
+Simulates the same 100-request ShareGPT workload on three platforms --
+(a) Qwen3-32B on L40Sx2 TP2, (b) Llama3-70B on H100x8 TP8, (c) Llama-3.1-8B
+on TPUv6e -- and writes one CSV per platform under ``results/T1/`` with
+per-request TTFT/end-to-end latency and this run's wall-clock time (panel
+(d)'s runtime bar chart in plot_T1.py). Every number comes from actually
+running the MIST simulator in this process.
 
-  (a) Qwen3-32B on L40Sx2, TP2
-  (b) Llama3-70B on H100x8, TP8
-  (c) Llama-3.1-8B on TPUv6e
-
-and writes one CSV per platform under ``results/T1/`` with per-request TTFT
-and end-to-end latency, plus the wall-clock time this script itself took to
-run the simulation (used for the panel (d) runtime bar chart in plot_T1.py).
-
-Every number in the written CSVs comes from actually running the MIST
-simulator in this process -- nothing here is copied from the paper or from
-a notebook. What's configurable is the *input* workload, not whether MIST
-ran:
-
-* Default: replays the fixed per-request arrival/length trace that vLLM
-  was actually measured against (vendored under data/validation/T1/, see
-  its README.md). This is what makes Fig. 4 a controlled comparison --
-  MIST, the real vLLM run, Vidur, and LLMServingSim2.0 all see the exact
-  same 100 requests, so overlaying their latency distributions answers the
-  same question for every curve. Still fully reproducible: the trace file
-  is fixed and MIST's simulation of it is deterministic.
-* ``--resample-sharegpt``: an opt-in sensitivity-analysis mode that instead
-  draws a fresh, seeded 100-request sample from the public ShareGPT
-  dataset. Useful for asking "how sensitive is this latency distribution to
-  which 100 ShareGPT conversations you happen to serve", but its output is
-  *not* directly comparable to the vLLM/Vidur/LLMServingSim baselines,
-  which were all measured on the fixed trace above -- see
-  data/validation/T1/README.md for a worked example of just how large that
-  gap can be (a different fixed seed shifted mean E2E latency by >2x at the
-  same nominal RPS).
+By default, replays the fixed per-request trace vLLM/Vidur/LLMServingSim2.0
+were actually measured against (data/validation/T1/), so all four systems
+see the same 100 requests -- required for Fig. 4's latency distributions to
+be comparable. ``--resample-sharegpt`` instead draws a fresh seeded
+ShareGPT sample for sensitivity analysis only; its output is not comparable
+to those baselines (a different seed shifted mean E2E latency by >2x at the
+same nominal RPS -- see data/validation/T1/README.md and docs/FINDINGS.md#t1).
 """
 
 import argparse
@@ -53,24 +36,13 @@ from mist_charts.paths import TRACE_DIR, VALIDATION_DIR, result_path
 
 
 def _patch_genz_quant_compat() -> None:
-    """TEMPORARY compatibility shim for a version-skew bug in GenZ. Remove
-    once upstream is fixed -- see KNOWN_ISSUES in data/validation/T1/README.md.
-
-    The ``genz_llm`` package pinned in requirements.txt vendors an
-    aiconfigurator submodule whose ``GEMMQuantMode`` / ``FMHAQuantMode`` /
-    ``KVCacheQuantMode`` / ``MoEQuantMode`` enums no longer have a
-    ``bfloat16`` member (upstream renamed it to ``float16``, the generic
-    16-bit w16a16 mode), while GenZ's own ``GenZ/db.py`` (module-level
-    ``bits_to_gemm_quants`` dict, plus default args on ``query_context_attention``
-    / ``query_generation_attention`` / ``query_gemm``) still references
-    ``.bfloat16`` at import/definition time. Without this shim, constructing
-    *any* GenZ ``System`` (and hence any MIST ``vLLMPlatformConfig``) raises
-    ``AttributeError`` immediately, for every platform. This is a pure
-    monkeypatch executed from this script only -- it does not modify the
-    installed GenZ/MIST packages, which live outside this repository and are
-    intentionally left untouched; the real fix (aliasing ``.bfloat16`` back
-    onto ``.float16``, or updating GenZ's own references) belongs upstream
-    in GenZ-LLM-Analyzer's ``GenZ/db.py``.
+    """TEMPORARY monkeypatch for a GenZ/aiconfigurator version-skew bug:
+    GenZ/db.py still references GEMMQuantMode.bfloat16 (and FMHA/KVCache/
+    MoE equivalents), which the pinned aiconfigurator submodule renamed to
+    .float16, so constructing any GenZ System raises AttributeError. Aliases
+    .bfloat16 back onto .float16 at runtime; edits no installed package.
+    Remove once upstream is fixed -- see docs/FINDINGS.md ("GenZ
+    GEMMQuantMode rename").
     """
     try:
         import GenZ  # noqa: F401
@@ -177,15 +149,10 @@ _TOKENIZER_LOAD_FAILED = False
 
 def _get_tokenizer():
     """Lazily load a length-counting tokenizer, shared across all calls.
-
-    Uses GPT-2's tokenizer: it is small, ungated, and downloads/caches with
-    plain `transformers` (unlike Llama/Qwen tokenizers, which require
-    accepting a license or a HF token). It won't exactly match the tokenizer
-    each target model actually uses, but BPE token counts across modern
-    tokenizers agree far more closely with each other than a naive
-    whitespace-word count does -- this is what keeps the resampled ShareGPT
-    workload's length distribution close to what the vendored real-vLLM
-    baselines were measured on (see data/validation/T1/README.md).
+    Uses GPT-2's (small, ungated, no license/HF-token needed unlike
+    Llama/Qwen) -- BPE token counts agree closely enough across modern
+    tokenizers to keep the resampled workload's length distribution close
+    to what the vendored baselines were measured on.
     """
     global _TOKENIZER, _TOKENIZER_LOAD_FAILED
     if _TOKENIZER is not None or _TOKENIZER_LOAD_FAILED:
@@ -215,14 +182,11 @@ def _approx_token_count(text: str) -> int:
 
 
 def _load_sharegpt_pairs(path: Path) -> list:
-    """Extract (input_len, output_len) pairs from the first human/gpt turn of
-    each ShareGPT conversation, using the same length bounds vLLM's own
-    ``benchmark_serving.py --dataset-name sharegpt`` sampler applies
-    (prompt_len >= 4, output_len >= 4, prompt_len <= 1024, prompt_len +
-    output_len <= 2048). Without this filter the raw ShareGPT_V3 dataset's
-    long tail (a handful of >2000-token conversations) dominates the
-    100-request sample and produces a much heavier-tailed workload than the
-    vendored baselines were measured on.
+    """Extract (input_len, output_len) pairs from the first human/gpt turn
+    of each conversation, using vLLM's own benchmark_serving.py sharegpt
+    sampler's length bounds (prompt_len 4-1024, prompt+output <= 2048) --
+    without this filter the dataset's long tail dominates the 100-request
+    sample and produces a much heavier-tailed workload than the baselines.
     """
     if not path.exists():
         raise FileNotFoundError(
@@ -258,15 +222,9 @@ def _load_sharegpt_pairs(path: Path) -> list:
 
 def build_fixed_trace_queue(trace_path: Path) -> list:
     """Replay the exact per-request arrival/length trace vLLM was measured
-    against (columns: arrival_timestamp, prompt_size, token_size).
-
-    This is the DEFAULT workload source: MIST, the vendored real-vLLM run,
-    and the vendored Vidur/LLMServingSim2.0 runs all see the same 100
-    requests in the same arrival order, which is what makes Fig. 4 a valid
-    controlled comparison rather than three simulators each answering a
-    different question. ``TraceIngestion`` assigns ``request_id`` from the
-    CSV row order (see mist/Input_requests/Trace_inputs.py), matching the
-    order the vLLM benchmark client dispatched these requests in.
+    against (default workload source -- see module docstring). Row order
+    is preserved as `request_id` (`TraceIngestion`), matching vLLM's own
+    dispatch order.
     """
     if not trace_path.exists():
         raise FileNotFoundError(
@@ -279,18 +237,9 @@ def build_fixed_trace_queue(trace_path: Path) -> list:
 
 def build_resampled_queue(rps: float, num_requests: int, seed: int) -> list:
     """[--resample-sharegpt, opt-in] Resample `num_requests` ShareGPT
-    conversations and schedule their arrivals as a Poisson process at
-    `rps`, using MIST's own seeded PoissonDistribution so the arrival-time
-    math matches the simulator's other request-generation paths exactly
-    (--seed defaults to MIST's own RequestDistributions default of 259).
-
-    This is a sensitivity-analysis mode, not the validation workload: its
-    100 requests are a *different* sample than the fixed trace vLLM/Vidur/
-    LLMServingSim2.0 were measured against (see build_fixed_trace_queue),
-    so latencies from this mode are not directly comparable to those
-    baselines. See data/validation/T1/README.md for how much a different
-    seeded draw can move the aggregate token demand -- and hence end-to-end
-    latency -- at the same nominal RPS.
+    conversations and schedule Poisson arrivals at `rps` via MIST's own
+    seeded PoissonDistribution. Sensitivity-analysis mode, not the
+    validation workload -- see module docstring and docs/FINDINGS.md#t1.
     """
     pairs = _load_sharegpt_pairs(SHAREGPT_PATH)
     if len(pairs) < num_requests:
@@ -337,12 +286,9 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
     """Run one MIST simulation and return its per-request result frame.
 
     Passes fresh `decode_only_cache`/`mixed_batch_cache` dicts explicitly:
-    `LLMEngine.__init__` defaults these to mutable `{}` default arguments,
-    so without this, every LLMEngine constructed in this *process* would
-    silently share (and therefore corrupt) each other's per-step runtime
-    cache -- we verified this collapses all three platforms' latencies to
-    be bit-for-bit identical. Passing explicit dicts here works around it
-    entirely from this script; MIST itself is untouched.
+    `LLMEngine.__init__` defaults these to mutable `{}`, which otherwise
+    corrupts results across platforms sharing a process. See
+    docs/FINDINGS.md ("LLMEngine shares its per-step runtime cache").
     """
     vllm_df_path = cfg["vllm_df_path"]
     if not Path(vllm_df_path).exists():

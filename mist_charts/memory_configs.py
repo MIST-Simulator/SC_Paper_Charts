@@ -1,24 +1,19 @@
 """The five KV-cache storage architectures compared in Fig. 10 (Table 2 of
 the MIST SC26 paper).
 
-This module holds only declarative data.  ``run_T4.py`` builds the MIST
-``MemoryCacheConfig`` / ``SingleCacheConfig`` objects (and the network-link
-parameters used for the cache -> compute transfer) from these records,
-``plot_T4.py`` reads ``CASE_COLORS``/``CASE_ORDER`` for the legend, and the
-README's Table 2 is transcribed from here -- so there is exactly one place
-that encodes "what Case A/B/C/D/E means".
+This module holds only declarative data. ``run_T4.py`` builds the MIST
+``MemoryCacheConfig``/``SingleCacheConfig`` objects (and cache->compute
+network-link params) from these records, ``plot_T4.py`` reads
+``CASE_COLORS``/``CASE_ORDER`` for the legend, and the README's Table 2 is
+transcribed from here -- one place encoding "what Case A/B/C/D/E means".
 
-Every capacity/bandwidth number below is copied verbatim from Table 2 of the
-paper.  Numbers not given by Table 2 (retrieval latency, the network link
-latency/bandwidth between an engine and its cache, and the number of skew
-centers used to synthesize a "shared" access pattern) are carried over from
-the authors' original sweep notebook
+Capacity/bandwidth numbers are copied verbatim from Table 2. Numbers not
+given by Table 2 (retrieval latency, network link latency/bandwidth, skew
+centers) are carried over from the authors' sweep notebook
 (``Experiments/Memory_Storage_Comparisions.py`` /
-``4. Cache_storage_config_comparisions.ipynb``, cell 7), with one correction:
-that notebook's Case D used a 1 GB/s DCN link (a leftover from an earlier
-tuning pass); Table 2 states the inter-rack transfer is 128 GB/s, so this
-module uses 128 GB/s. See the T4 section of the top-level README for the
-full discrepancy report.
+``4. Cache_storage_config_comparisions.ipynb``, cell 7). Case D's DCN
+bandwidth is a known paper-vs-notebook conflict; see the note on that field
+below and docs/FINDINGS.md#t4.
 """
 
 from dataclasses import dataclass
@@ -98,24 +93,10 @@ STORAGE_ARCHITECTURES = {
         cache_retrieval_latency_ms=2.0,
         sharing_degree=None,
         network_latency_ms=20.0,
-        # --- KNOWN PAPER-VS-ARTIFACT CONFLICT (do not "fix" this) ---------
-        # Table 2 of the paper states Case D's inter-rack transfer runs at
-        # "128 GB/s". But the notebook that generated the published
-        # Case_Study_Memory_Cache.pdf (Experiments/Memory_Storage_Comparisions.py
-        # via `4. Cache_storage_config_comparisions.ipynb`, cell 7) hard-codes
-        # this link at 1 GB/s, and only 1 GB/s reproduces the published
-        # figure's shape: Case D sits near-worst in both "shared" panels,
-        # collapsing toward Case E (recompute) behavior, because the slow
-        # DCN hop dominates. At 128 GB/s, D is architecturally a strict
-        # superset of C (same storage tier, but load-balanced across all 4
-        # racks instead of just 1), so it strictly *dominates* C instead --
-        # which is an interesting sensitivity result, but not what's in the
-        # paper. We default to the notebook's 1 GB/s (matches the published
-        # figure) and expose --dcn-bandwidth-gbps in run_T4.py so a reader
-        # can flip to 128 (Table 2's stated value) and see the reversal.
-        # This is a genuine inconsistency between the paper text and the
-        # artifact that produced its own figure; it is reported here rather
-        # than silently resolved one way or the other.
+        # Table 2 states 128 GB/s here, but only 1 GB/s (the notebook that
+        # made the published figure) reproduces it -- at 128 GB/s Case D
+        # strictly dominates C instead. Do not "fix" this; --dcn-bandwidth-gbps
+        # in run_T4.py flips it. See docs/FINDINGS.md#t4.
         network_bandwidth_gbps=1.0,
         dcn=True,
         recompute_kv=False,

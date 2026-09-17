@@ -11,41 +11,20 @@ Reads via ``mist_charts.paths.resolve_results("T3", ...)`` (falling back to
 the MIST simulator: every number plotted here was already computed by
 ``run_T3.py``.
 
-Faithfully ports ``GenA_Paper_charts/SC26/plot_sc_results.py`` (Fig. 7, both
-panels: ``load_and_process`` + ``build_side_by_side_plot``) and
+Faithfully ports ``GenA_Paper_charts/SC26/plot_sc_results.py`` (Fig. 7:
+``load_and_process`` + ``build_side_by_side_plot``) and
 ``GenA_Paper_charts/SC26/plot_bar_results.py`` (Fig. 8: ``plot_column`` +
-``build_2x2_plots``) -- the two scripts the paper's author confirmed
-produced the camera-ready figures. An earlier, hand-written version of this
-script (written before those two existed) has been discarded in favour of
-this port; only the vendor/price/scale-factor *data* (module-level
-constants in ``mist_charts.pricing``) and the file-location / fallback
-plumbing (``mist_charts.paths``, ``mist_charts.style.save_figure``) are
-this repo's own.
+``build_2x2_plots``) -- the two scripts confirmed to have produced the
+camera-ready figures. Adapted in one place: this reads run_T3.py's clean
+``Hardware``/``Parallelism`` columns directly instead of regex-parsing the
+source's concatenated "UseCase"/"Serving Name" strings; every plotted
+number otherwise matches the source formula exactly (see inline comments
+citing the source function each block ports).
 
-Adapted, not literally copied, in one place: the source scripts derive
-``prefill_hw`` / ``decode_hw`` / node counts by regex-parsing concatenated
-"UseCase" / "Serving Name" strings (``parse_hardware`` /
-``parse_serving_name``), because their upstream CSV only has those two
-string columns. run_T3.py's CSV instead stores ``Hardware`` (a single SKU,
-or "prefill-decode" for disaggregated configs) and ``Parallelism`` (a TP/PP/
-DP dict) as clean columns directly, so this script reads those instead of
-regex-parsing -- same derived values, no string-parsing fragility. Every
-number that reaches a plot (cost, TTFT P99, throughput scaling,
-normalization, category assignment, Pareto fronts, star selection, bar
-selection, arrow deltas) matches the source formula exactly; see inline
-comments citing the source function each block ports.
-
-WARNING -- an inconsistency in the ported source, preserved faithfully
-rather than "fixed": plot_sc_results.py's scatter "Mixed" category
-(``assign_category``) is broad -- any disaggregated config whose two SKUs
-differ AT ALL, even two SKUs from the same vendor (e.g. h200_sxm prefill +
-b200_sxm decode, both Nvidia) is plotted as "Mixed". plot_bar_results.py's
-bar chart instead computes its "Mixed" bar from ``is_multi_vendor`` only --
-strictly different *vendor* families. So Fig. 7's blue squares and Fig. 8's
-Mixed bar are not counting quite the same set of configs. This script
-reproduces both definitions separately (``mist_charts.pricing.
-vendor_of_config`` for the broad one, ``is_multi_vendor_config`` for the
-narrow one) rather than silently reconciling them.
+Fig. 7's scatter and Fig. 8's bar chart use two different, inconsistent
+"Mixed" definitions inherited from the source (broad `vendor_of_config` vs.
+narrow `is_multi_vendor_config`) -- preserved faithfully rather than
+reconciled; see docs/FINDINGS.md#t3.
 """
 
 import argparse
