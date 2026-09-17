@@ -173,6 +173,8 @@ USE_CASES: Dict[str, Dict] = {
 # which silently drops any longer request.
 MAX_CONTEXT_TOKENS = 120_000
 
+BITS = "fp8"
+
 
 RESULT_COLUMNS = [
     "UseCase", "Serving Name", "Batching_Strategy", "Hardware", "Parallelism",
@@ -404,11 +406,11 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
         prefill_p, decode_p = _row_prefill_decode(row)
         prefill_platform = PlatformConfig(
             device=prefill_hw, tensor_parallel_size=prefill_p["TP"],
-            pipeline_parallel_size=prefill_p["PP"], model=model,
+            pipeline_parallel_size=prefill_p["PP"], model=model, bits=BITS,
         )
         decode_platform = PlatformConfig(
             device=decode_hw, tensor_parallel_size=decode_p["TP"],
-            pipeline_parallel_size=decode_p["PP"], model=model,
+            pipeline_parallel_size=decode_p["PP"], model=model, bits=BITS,
         )
         num_clients = prefill_p["DP"] + decode_p["DP"]
         coordinator = MISTCoordinatorDisagg(
@@ -429,7 +431,7 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
         parallelism = row["Parallelism"]
         platform = PlatformConfig(
             device=row["Hardware"], tensor_parallel_size=parallelism["TP"],
-            pipeline_parallel_size=parallelism["PP"], model=model,
+            pipeline_parallel_size=parallelism["PP"], model=model, bits=BITS,
         )
         num_clients = parallelism["DP"]
         coordinator = MISTCoordinator(req_queue, logging_file=None, max_sim_time=max_sim_time)

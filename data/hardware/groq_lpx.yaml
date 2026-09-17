@@ -1,0 +1,34 @@
+# Groq 3 LPX (Language Processing Unit)
+# Source: https://developer.nvidia.com/blog/inside-nvidia-groq-3-lpx-the-low-latency-inference-accelerator-for-the-nvidia-vera-rubin-platform/
+# Power Source: https://www.cerebras.ai/blog/cerebras-cs-3-vs-groq-lpu
+# Rack-scale system: 256 chips total, 8 chips per 1U compute tray
+# Per-chip values derived from tray specs (9.6 PFLOPS FP8 / 8 chips) and rack specs (315 PFLOPS / 256 chips)
+
+data_dir: data/dummy # relative to systems_dir
+
+gpu: # reusing 'gpu' key for tray-level specs
+  mem_bw: 1200000000000000 # 1.2 PB/s per tray in 8 chips; rack: 40 PB/s / 32 — on-chip SRAM bandwidth
+  mem_bw_empirical_scaling_factor: 0.8
+  mem_empirical_constant_latency: 0.000003
+  mem_capacity: 4294967296 # 4 GB per tray / 8 chips; 128 GB rack / 256 chips — on-chip SRAM
+  float16_tc_flops: 4800000000000000 # 0.5x FP8; FP16 not explicitly disclosed in source)
+  int8_tc_flops: 9600000000000000 #  same as FP8 (typical for modern inference accelerators; INT8 not explicitly disclosed)
+  fp8_tc_flops: 9600000000000000 # 9.6 PFLOPS per 8-chip tray; 315 PFLOPS / 32 chips
+  power: 3000 # watts — estimated; TDP/TBP not disclosed in source; Cerebras say 375W per chip, tray = 375*8
+  sm_version: 0 # not applicable for Groq LPU
+
+node:
+  num_gpus_per_node: 32 # 32 LPX Racks per rack
+  inter_node_bw: 1250000000000 # 1.25 TB/s per chip single direction — derived from scale-up BW: 640 TB/s rack / 256 chips = 2.5 TB/s bi-dir → 1.25 TB/s unidirectional
+  intra_node_bw: 1250000000000 # 1.25 TB/s per chip single direction — C2C aggregate: 2.5 TB/s bi-directional per chip (96 links × 112 Gbps = ~10.7 Tbps = ~1.34 TB/s each way; using rack-scale figure)
+  pcie_bw: 64000000000 # 64 GB/s — estimated; PCIe 5.0 x16 typical for host CPU attachment (not explicitly disclosed)
+  p2p_latency: 0.00001
+
+misc:
+  nccl_mem: # Not applicable for Groq LPU — uses explicit data movement, not NCCL collectives
+    1: 0
+    2: 0
+    4: 0
+    8: 0
+  other_mem: 3758096384
+  nccl_version: "2.27.3"

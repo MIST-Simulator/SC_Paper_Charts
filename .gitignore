@@ -241,3 +241,6 @@ Platform_traces_logs/
 trace.json
 
 .DS_Store
+
+# Recursive GenZ checkout created by scripts/install_genz.sh
+.vendor/

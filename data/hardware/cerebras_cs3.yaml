@@ -1,0 +1,36 @@
+# Cerebras CS-3 Wafer-Scale Engine
+# Source: https://cdn.sanity.io/files/e4qjo92p/production/bb7d54ea017ccd98ca27c8375483204caf68890f.pdf
+# Cerebras CS-3 system built around the 3rd-Generation Wafer-Scale Engine (WSE-3)
+# WSE-3: 4 trillion transistors, 900,000 AI cores, TSMC 5nm, 46,225 mm2 silicon
+# Note: FLOPS figures are sparse (as published by Cerebras); dense ~50% of sparse.
+
+data_dir: data/dummy # relative to systems_dir
+
+gpu: # reusing 'gpu' key for chip-level (wafer-level) specs
+  mem_bw: 21_000_000_000_000_000 # 21 PB/s on-chip SRAM bandwidth (published: 21 PB/s)
+  mem_bw_empirical_scaling_factor: 0.8
+  mem_empirical_constant_latency: 0.000003
+  mem_capacity: 47244640256 # 44 GB on-chip SRAM (44 * 1024^3 bytes)
+  float16_tc_flops: 62500000000000000 # 62.5 PFLOPS FP16/BF16 dense (125 PFLOPS sparse / 2)
+  int8_tc_flops: 125000000000000000 # 125 PFLOPS INT8 dense estimate (2x FP16 dense; INT8 not separately disclosed)
+  fp8_tc_flops: 125000000000000000 # 125 PFLOPS FP8 dense estimate (WSE-3 supports FP8; same ratio as INT8)
+  power: 27000 # 27,000 W — published system max power (27 kW)
+  sm_version: 0 # not applicable for Cerebras WSE
+
+node:
+  num_gpus_per_node: 1 # 1 wafer (WSE-3) per CS-3 system
+  inter_node_bw:
+    200000000000 # ~200 GB/s per CS-3 system, single direction
+    # Rack: 8x QSFP-DD 4x100G = 3.2 Tbps = 400 GB/s total bi-dir across 2 systems per rack
+  intra_node_bw: 214000000000000000 # 214 PB/s on-wafer fabric bandwidth (published: 214 PB/s)
+  pcie_bw: 150000000000 # 150 GB/s — derived from published I/O: 1.2 Tb/s = 150 GB/s
+  p2p_latency: 0.00001
+
+misc:
+  nccl_mem: # Not applicable for Cerebras WSE — uses on-wafer fabric, not NCCL collectives
+    1: 0
+    2: 0
+    4: 0
+    8: 0
+  other_mem: 3758096384
+  nccl_version: "2.27.3"

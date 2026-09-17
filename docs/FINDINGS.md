@@ -442,6 +442,9 @@ What works in a clean environment:
 
 ### 1. aiconfigurator does not ship with a pip install of GenZ
 
+**Resolved**: `scripts/install_genz.sh` clones GenZ recursively and installs
+it, and `setup.sh` runs it automatically.
+
 `pip install git+.../GenZ-LLM-Analyzer` does not fetch git submodules, so a
 fresh install has no `aiconfigurator` package at all — no performance
 databases and no system YAMLs:
@@ -462,6 +465,9 @@ and automate a submodule-init step. Today `pip install` yields a
 silently half-working GenZ.
 
 ### 2. The non-Nvidia SKU definitions exist only as untracked local files
+
+**Resolved**: the 11 affected definitions are now vendored in
+`data/hardware/` and installed by `scripts/install_genz.sh`.
 
 Every SKU in the paper's search space that is not an Nvidia part is a
 hand-authored YAML living untracked inside the aiconfigurator submodule on
@@ -501,11 +507,36 @@ GenZ's `db.py` still references `bfloat16` in 6 places, so constructing any
 deleted upstream, gb300 has no usable vLLM database — hence
 `_patch_runtime_db_backend_fallback`.
 
-Both shims are compensating for the pin, not for real defects. Pinning the
-submodule back to `30dd40d` (equivalently, GenZ at `278735d`) restores
-`bfloat16` and a complete gb300 vLLM database, and both shims can then be
-deleted. This may also account for some of the `chunked_moddeling`
-failures on long decode KV contexts, since database coverage differs
-between the two pins — and therefore for part of the T3 Mixed-vendor
-discrepancy above, as the published results were produced against the
-older pin.
+**Do not revert the pin.** The obvious fix — pinning the submodule back to
+`30dd40d`, which has `bfloat16` and a complete gb300 vLLM database — breaks
+everything else, because the accelerator definitions in `data/hardware/`
+were authored against `d5fb9da`'s schema. They use the key
+`float16_tc_flops`; the older revision's `perf_database.py` reads
+`bfloat16_tc_flops` and fails with `KeyError: 'bfloat16_tc_flops'` for every
+SKU. `scripts/install_genz.sh` therefore uses the revision GenZ records,
+and both shims are required, not optional.
+
+The real fix belongs upstream in GenZ: update `db.py` to the current enum
+name (`float16`), and either restore a complete `gb300/vllm` database or
+teach `System` to accept a `backend` argument so a caller can select one.
+Until then this repository carries both shims.
+
+### 4. The placeholder database tree is also untracked
+
+Accelerators without measured silicon data (the AMD, TPU and Etched parts)
+set `data_dir: data/dummy` and are modelled from their YAML spec sheet via
+the roofline path. aiconfigurator nevertheless resolves a database *version*
+before reaching that path, so `systems/data/dummy/` must exist. On the
+authors' machine it did, as an untracked, entirely empty directory tree:
+
+```
+dummy/vllm/0.14.0/   (0 files)
+dummy/nccl/2.27/     (0 files)
+```
+
+Upstream ships no such directory, so a fresh checkout fails with
+`'NoneType' object has no attribute 'system_spec'` for mi350x, mi355x,
+tpu_v6e, tpu_v7 and etched — i.e. every SKU that is not an Nvidia part.
+
+**Resolved**: `scripts/install_genz.sh` creates the tree. No files are
+needed; nothing ever reads them.

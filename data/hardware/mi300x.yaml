@@ -1,0 +1,31 @@
+# AMD Instinct MI300X Accelerator
+
+data_dir: data/dummy # relative to systems_dir
+
+gpu:
+  mem_bw: 5300000000000 # 5.3TB/s
+  mem_bw_empirical_scaling_factor: 0.8 # nonofficial correction
+  mem_empirical_constant_latency: 0.000003 # 3us nonofficial correction
+  mem_capacity: 192000000000 # 192GB HBM3
+  float16_tc_flops: 1307400000000000 # 1307.4TFLOPS (BF16/FP16, without sparsity)
+  int8_tc_flops: 2614900000000000 # 2614.9TOPS (without sparsity)
+  fp8_tc_flops: 2614900000000000 # 2614.9TFLOPS (without sparsity)
+  fp4_tc_flops: 0 # FP4 not supported on MI300X
+  power: 750 # Watt
+  sm_version: 0 # AMD chip, not applicable
+
+node:
+  num_gpus_per_node: 8
+  inter_node_bw: 50000000000 # Byte/s per GPU, single direction, 400Gb/s InfiniBand (NVIDIA CX7) per GPU
+  intra_node_bw: 64000000000 # Byte/s per GPU, single direction, 128GB/s bidirectional AMD Infinity Fabric per GPU
+  pcie_bw: 32000000000 # Byte/s, single direction, PCIe 5.0 x16
+  p2p_latency: 0.00001 # 10us nonofficial correction
+
+misc:
+  nccl_mem: # nonofficial corrections
+    1: 0
+    2: 358612992 # 342MB
+    4: 411041792 # 392MB
+    8: 411041792 # 392MB
+  other_mem: 3758096384 # 3.5GB
+  nccl_version: "2.27.3"

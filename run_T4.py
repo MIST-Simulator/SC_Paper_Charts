@@ -48,6 +48,7 @@ from mist_charts.paths import TRACE_DIR, result_path
 MODEL = "meta-llama/Llama-3.1-70B"
 DEVICE = "H100_GPU"
 TP_SIZE = 2
+BITS = "fp8"
 
 TRACE_NAME = "AzureLLMInferenceTrace_conv.csv"
 
@@ -255,7 +256,8 @@ def run_one_config(
     # notebook's run_simulation (perf: avoids re-deriving the GenZ system
     # model 128 times over).
     platform = PlatformConfig(
-        device=DEVICE, tensor_parallel_size=TP_SIZE, pipeline_parallel_size=1, model=MODEL
+        device=DEVICE, tensor_parallel_size=TP_SIZE, pipeline_parallel_size=1,
+        model=MODEL, bits=BITS,
     )
     scheduler_config_kwargs = dict(
         batching_method=BatchingMethod.CHUNKED,

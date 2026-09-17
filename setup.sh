@@ -30,6 +30,13 @@ echo "==> Installing Python dependencies (including the MIST simulator)"
 python -m pip install --upgrade pip
 python -m pip install -r "$REPO_ROOT/requirements.txt"
 
+# Must run after the requirements install: it replaces the pip-installed
+# GenZ with a recursive checkout that actually includes aiconfigurator, and
+# adds this paper's accelerator definitions. Without it, T3 and T4 fail with
+# ModuleNotFoundError: No module named 'aiconfigurator'.
+echo
+PYTHON=python bash "$REPO_ROOT/scripts/install_genz.sh"
+
 echo
 echo "==> Setup complete."
 echo "    Activate the environment with:  conda activate $ENV_NAME"

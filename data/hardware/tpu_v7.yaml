@@ -1,0 +1,32 @@
+# Google TPU v7 (Ironwood)
+# Source: https://docs.cloud.google.com/tpu/docs/tpu7x
+# Power Source: https://www.techrxiv.org/doi/pdf/10.36227/techrxiv.175243279.98052974/v1
+data_dir: data/dummy # relative to systems_dir
+
+gpu: # reusing 'gpu' key for chip-level specs
+  mem_bw: 7920_000_000_000 # ~7,380 GiB/s (~7.92 TB/s) HBM bandwidth per chip
+  mem_bw_empirical_scaling_factor: 0.8
+  mem_empirical_constant_latency: 0.000003 # 3us
+  mem_capacity: 206158430208 # 192 GiB per chip
+  float16_tc_flops: 2307000000000000 # 2,307 TFLOPS BF16/FP16 per chip
+  int8_tc_flops: 4614000000000000 # 4,614 TFLOPS INT8 per chip (estimated = FP8; no separate INT8 spec published)
+  fp8_tc_flops: 4614000000000000 # 4,614 TFLOPS FP8 per chip
+  fp4_tc_flops: 0 # FP4 not supported / not specified for TPU v7
+  power: 1000 # TDP per chip not published in official documentation
+  sm_version: 0 # not applicable for TPU
+
+node:
+  num_gpus_per_node: 4 # 4 chips per host VM (tpu7x-standard-4t)
+  inter_node_bw: 600000000000 # 600 GB/s per chip, single direction (1,200 GBps bidirectional ICI)
+  intra_node_bw: 600000000000 # 600 GB/s per chip, single direction (same ICI fabric intra-host)
+  pcie_bw: 12500000000 # 12.5 GB/s per chip (100 Gbps DCN bandwidth per chip)
+  p2p_latency: 0.00001
+
+misc:
+  nccl_mem: # not applicable for TPU (no NCCL)
+    1: 0
+    2: 0
+    4: 0
+    8: 0
+  other_mem: 3758096384 # 3.5 GB reserved for runtime/system overhead
+  nccl_version: "2.27.3"

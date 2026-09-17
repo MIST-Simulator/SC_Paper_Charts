@@ -1,0 +1,31 @@
+# AMD Instinct MI350X Accelerator
+
+data_dir: data/dummy # relative to systems_dir
+
+gpu:
+  mem_bw: 8000000000000 # 8 TB/s HBM3E
+  mem_bw_empirical_scaling_factor: 0.8
+  mem_empirical_constant_latency: 0.000003 # 3us nonofficial correction
+  mem_capacity: 309237645312 # 288 GB HBM3E (288 * 1024^3)
+  float16_tc_flops: 2306900000000000 # 2306.9 TFLOPS FP16/BF16 matrix (without sparsity)
+  int8_tc_flops: 4613800000000000 # 4613.8 TOPS INT8 matrix (without sparsity)
+  fp8_tc_flops: 4613800000000000 # 4613.8 TFLOPS OCP-FP8 / MXFP8 matrix (without sparsity)
+  fp4_tc_flops: 9225000000000000 # 9225 TFLOPS MXFP4 matrix (without sparsity)
+  power: 750 # Watt TDP
+  sm_version: 0 # AMD, not applicable
+
+node:
+  num_gpus_per_node: 8
+  inter_node_bw: 50000000000 # Byte/s per GPU, single direction, ~400 Gb/s InfiniBand
+  intra_node_bw: 160000000000 # Byte/s per GPU, single direction, AMD Infinity Fabric 160 GB/s per link (7 links per GPU)
+  pcie_bw: 128000000000 # Byte/s, single direction, PCIe Gen 5 x16 (128 GB/s)
+  p2p_latency: 0.00001
+
+misc:
+  nccl_mem:
+    1: 0
+    2: 358612992 # 342 MB
+    4: 411041792 # 392 MB
+    8: 411041792 # 392 MB
+  other_mem: 3758096384 # 3.5 GB
+  nccl_version: "2.27.3"

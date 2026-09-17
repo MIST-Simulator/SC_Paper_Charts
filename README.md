@@ -22,6 +22,17 @@ bash scripts/download_traces.sh   # public Azure + ShareGPT traces
 python scripts/smoke_test.py      # verify the install (<1 min)
 ```
 
+`setup.sh` also runs `scripts/install_genz.sh`, which installs GenZ —
+MIST's analytical hardware model — from a recursive checkout. This step is
+required and cannot be replaced by `pip install`: pip does not fetch git
+submodules, so a plain install leaves GenZ without its `aiconfigurator`
+submodule, and every accelerator modelled from a performance database then
+fails with `ModuleNotFoundError: No module named 'aiconfigurator'`, taking
+out T3 and T4. The script also installs the accelerator definitions in
+`data/hardware/` (MI350X, MI355X, TPUv6e, TPUv7, Etched Sohu and others)
+that the heterogeneous search in T3 sweeps over. Budget a few GB of disk
+and several minutes for the checkout.
+
 Then regenerate every figure from the committed reference results, which
 takes seconds:
 

@@ -1,0 +1,32 @@
+# Google TPU v6e (Trillium)
+# Source: https://docs.cloud.google.com/tpu/docs/v6e
+# Specs as of 2025. All values in base SI/IEC units.
+
+data_dir: data/dummy # relative to systems_dir
+
+gpu: # reusing 'gpu' key for chip-level specs
+  mem_bw: 1758789107712 # ~1638 GiB/s per chip (1638 * 1024^3); source: Google Cloud TPU v6e docs
+  mem_bw_empirical_scaling_factor: 0.8
+  mem_empirical_constant_latency: 0.000003 # 3us placeholder; tune based on observations
+  mem_capacity: 34359738368 # 32 GiB per chip (32 * 1024^3); source: Google Cloud TPU v6e docs
+  float16_tc_flops: 918000000000000 # 918 TFLOPS BF16/FP16 MXU per chip; source: Google Cloud TPU v6e docs
+  int8_tc_flops: 1836000000000000 # 1836 TOPS INT8 per chip (2x BF16); source: Google Cloud TPU v6e docs
+  fp8_tc_flops: 1836000000000000 # FP8 not explicitly documented; using INT8 value as upper-bound placeholder
+  power: 0 # Per-chip TDP not published in Google Cloud TPU v6e docs
+  sm_version: 0 # Not applicable for TPU (NVIDIA SM version)
+
+node:
+  num_gpus_per_node: 8 # 8 TPU chips per host; source: Google Cloud TPU v6e docs
+  inter_node_bw: 12500000000 # ~12.5 GB/s per chip single direction; derived from 4x200Gbps NIC per host / 8 chips; source: Google Cloud TPU v6e docs
+  intra_node_bw: 400000000000 # 400 GB/s per chip single direction; ICI bidirectional 800 GBps / 2; source: Google Cloud TPU v6e docs
+  pcie_bw: 32000000000 # ~32 GB/s; PCIe bandwidth not specified in docs; placeholder based on PCIe 4.0 x16
+  p2p_latency: 0.00001 # 10us placeholder; tune based on observations
+
+misc:
+  nccl_mem: # Not applicable for TPU; using zeros as placeholder
+    1: 0
+    2: 0
+    4: 0
+    8: 0
+  other_mem: 3758096384 # 3.5 GiB overhead placeholder (matches other system configs)
+  nccl_version: "2.27.3"

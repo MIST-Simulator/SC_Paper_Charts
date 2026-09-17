@@ -1,0 +1,30 @@
+# AMD Instinct MI355X Accelerator
+
+data_dir: data/dummy # relative to systems_dir
+gpu:
+  mem_bw: 8000000000000 # 8TB/s
+  mem_bw_empirical_scaling_factor: 0.8 # some nonofficial correction based on observations, you should try to modify based on your own observations
+  mem_empirical_constant_latency: 0.000003 # 3us some nonofficial correction based on observations, you should try to modify based on your own observations
+  mem_capacity: 309237645312 # 288GB HBM3E (288 * 1024^3)
+  float16_tc_flops: 2516600000000000 # 2.5166 PFLOPS (FP16 Matrix / BF16)
+  int8_tc_flops: 5033200000000000 # 5.0332 POPS (INT8 Matrix)
+  fp8_tc_flops: 5033200000000000 # 5.0332 PFLOPS (OCP-FP8 / MXFP8)
+  fp4_tc_flops: 10066300000000000 # 10.0663 PFLOPS (MXFP4)
+  power: 1400 # Watt
+  sm_version: 0 # AMD, not applicable
+
+node:
+  num_gpus_per_node: 8
+  inter_node_bw: 100000000000 # Byte/s per GPU, single direction
+  intra_node_bw: 153600000000 # Byte/s per gpu, single direction, AMD Infinity Fabric 153.6 GB/s per link
+  pcie_bw: 128000000000 # Byte/s, single direction, PCIe Gen 5 x16 (128 GB/s)
+  p2p_latency: 0.00001 # 10us some nonofficial correction based on observations, you should try to modify based on your own observations
+
+misc:
+  nccl_mem: # some nonofficial correction based on observations, you should try to modify based on your own observations
+    1: 0
+    2: 358612992 # 342MB
+    4: 411041792 # 392MB
+    8: 411041792 # 392MB
+  other_mem: 3758096384 # increase from 551MB to 3.5GB for safer deployment
+  nccl_version: "2.27.3"
