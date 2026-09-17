@@ -11,30 +11,40 @@ Reads via ``mist_charts.paths.resolve_results("T3", ...)`` (falling back to
 the MIST simulator: every number plotted here was already computed by
 ``run_T3.py``.
 
-Faithfully ports ``GenA_Paper_charts/SC26/plot_sc_results.py`` (Fig. 7:
-``load_and_process`` + ``build_side_by_side_plot``) and
-``GenA_Paper_charts/SC26/plot_bar_results.py`` (Fig. 8: ``plot_column`` +
+Faithful port of ``GenA_Paper_charts/SC26/plot_sc_results.py`` (Fig. 7:
+``parse_hardware``, ``parse_serving_name``, ``get_vendor``, ``compute_cost``,
+``_flatten``, ``compute_ttft_percentiles``, ``compute_pareto_front``,
+``load_and_process``, ``build_side_by_side_plot``) and
+``GenA_Paper_charts/SC26/plot_bar_results.py`` (Fig. 8: ``plot_column``,
 ``build_2x2_plots``) -- the two scripts confirmed to have produced the
-camera-ready figures. Adapted in one place: this reads run_T3.py's clean
-``Hardware``/``Parallelism`` columns directly instead of regex-parsing the
-source's concatenated "UseCase"/"Serving Name" strings; every plotted
-number otherwise matches the source formula exactly (see inline comments
-citing the source function each block ports).
+camera-ready figures. Operates on the author's own schema directly:
+``load_and_process`` regex-parses the concatenated "UseCase" / "Serving
+Name" strings exactly as the source does, rather than reading precomputed
+columns. Prices, vendor grouping and colors come from ``mist_charts.pricing``
+(reconciled with the source's ``DEFAULT_PRICES``) instead of a second
+copy inlined here.
 
-Fig. 7's scatter and Fig. 8's bar chart use two different, inconsistent
-"Mixed" definitions inherited from the source (broad `vendor_of_config` vs.
-narrow `is_multi_vendor_config`) -- preserved faithfully rather than
-reconciled; see docs/FINDINGS.md#t3.
+One deliberate fix, kept: the source hardcodes a "+" in Fig. 8's
+throughput-gain label (``f"+{pct_increase:.1f}%"``), so a *loss* renders as
+"+-11.1%". This is a genuine bug in the source, not a stylistic choice --
+losses are rendered signed (a leading "-") and in red instead. Also
+retained beyond the source: Fig. 7's scatter and Fig. 8's bar chart
+inherit two different "Mixed" definitions from the source itself (Fig. 7's
+``assign_category`` also calls a same-vendor heterogeneous pair "Mixed";
+Fig. 8's ``is_multi_vendor`` requires different vendors) -- preserved
+faithfully rather than reconciled; see docs/FINDINGS.md#t3.
 """
 
 import argparse
 import ast
+import re
 import sys
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 
 matplotlib.use("Agg", force=True)  # headless: this repo's scripts never open a GUI window
+import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -42,18 +52,17 @@ from matplotlib.ticker import MaxNLocator
 
 from mist_charts.paths import resolve_results
 from mist_charts.pricing import (
+    IGNORE_HW,
     PERFORMANCE_SCALE_FACTOR,
+    PRICE_PER_HOUR,
     SKU_DISPLAY_NAMES,
     VENDOR_CATEGORY_ORDER,
     VENDOR_COLORS,
     VENDOR_OF_SKU,
-    is_multi_vendor_config,
-    parse_hardware,
-    vendor_of_config,
 )
 from mist_charts.style import save_figure
 
-# ─────────────────────── Font and style (ported from plot_sc_results.py /
+# ─────────────────────── Font sizes (ported from plot_sc_results.py /
 # plot_bar_results.py FONT_SIZES -- large, print/poster-scale) ────────────
 FONT_SIZES = {
     "title": 36,
@@ -65,15 +74,29 @@ FONT_SIZES = {
 
 # Ported from plot_sc_results.py's CATEGORY_STYLES, restricted to the
 # categories our 8-SKU search space can actually produce (Groq/Cerebras/
-# Other never appear). Dict order also fixes scatter draw order and legend
-# order (Mixed, Etched, TPU, AMD, Nvidia), matching the paper figure.
+# Other never appear: Cerebras is the one non-8-SKU hardware the author's
+# real CSVs contain, and IGNORE_HW drops it before category assignment).
+# Dict order also fixes scatter draw order and Fig. 7's legend order
+# (Mixed, Etched, TPU, AMD, Nvidia), matching the paper figure. Colors
+# match mist_charts.pricing.VENDOR_COLORS (the single source for them).
 CATEGORY_STYLES = {
-    "Mixed": {"color": "#1f77b4", "marker": "s", "edgecolor": "navy"},
-    "Etched": {"color": "#ff7f0e", "marker": "o", "edgecolor": "#a65100"},
-    "TPU": {"color": "#9467bd", "marker": "o", "edgecolor": "#5e3c81"},
-    "AMD": {"color": "#17becf", "marker": "o", "edgecolor": "#0e7a85"},
-    "Nvidia": {"color": "#2ca02c", "marker": "o", "edgecolor": "darkgreen"},
+    "Mixed": {"color": VENDOR_COLORS["Mixed"], "marker": "s", "edgecolor": "navy"},
+    "Etched": {"color": VENDOR_COLORS["Etched"], "marker": "o", "edgecolor": "#a65100"},
+    "TPU": {"color": VENDOR_COLORS["TPU"], "marker": "o", "edgecolor": "#5e3c81"},
+    "AMD": {"color": VENDOR_COLORS["AMD"], "marker": "o", "edgecolor": "#0e7a85"},
+    "Nvidia": {"color": VENDOR_COLORS["Nvidia"], "marker": "o", "edgecolor": "darkgreen"},
 }
+
+# get_vendor's per-vendor SKU lists, derived from mist_charts.pricing's
+# single VENDOR_OF_SKU dict (the source instead hardcodes four such lists
+# directly). Groq/Cerebras have no entries -- pricing.py restricts to the
+# paper's Sec. 5.1 8-SKU table -- so those two vendor branches below are
+# unreachable in practice (Cerebras rows are dropped by IGNORE_HW first);
+# kept for a faithful control-flow match with the source.
+NVIDIA_DEVICES = [sku for sku, v in VENDOR_OF_SKU.items() if v == "Nvidia"]
+TPU_DEVICES = [sku for sku, v in VENDOR_OF_SKU.items() if v == "TPU"]
+AMD_DEVICES = [sku for sku, v in VENDOR_OF_SKU.items() if v == "AMD"]
+ETCHED_DEVICES = [sku for sku, v in VENDOR_OF_SKU.items() if v == "Etched"]
 
 USE_CASES: Dict[str, Dict] = {
     "chat": dict(
@@ -99,73 +122,99 @@ USE_CASES: Dict[str, Dict] = {
 }
 
 
-# ─────────────────────────── Data loading (port of plot_sc_results.py's
-# load_and_process) ───────────────────────────────────────────────────────
+# ─────────────────────────── Helpers (verbatim ports of
+# plot_sc_results.py's module-level functions) ─────────────────────────────
 
 
-def load_and_process(use_case: str) -> pd.DataFrame:
-    cfg = USE_CASES[use_case]
-    path = resolve_results("T3", cfg["results_file"])
-    df = pd.read_csv(path)
-    df = df.dropna(subset=["output_throughput", "TTFT_p99", "tokens_per_dollar", "Cost"])
-    df = df[(df["output_throughput"] > 0) & (df["TTFT_p99"] > 0) & (df["Cost"] > 0)]
-    if df.empty:
-        raise SystemExit(f"No usable rows in {path} (every config failed or was ignored).")
-
-    df["is_disaggregated"] = df["Batching_Strategy"] == "DISAGGREGATED"
-
-    hw_info = [parse_hardware(hw, disagg) for hw, disagg in zip(df["Hardware"], df["is_disaggregated"])]
-    df["prefill_hw"] = [h[0] for h in hw_info]
-    df["decode_hw"] = [h[1] for h in hw_info]
-    df["is_hetero"] = [h[2] for h in hw_info]
-    df["is_homogeneous"] = ~df["is_hetero"]
-
-    # cost_per_hour: run_T3.py already computes this at simulation time
-    # (Cost column, via deployment_space.get_search_space's get_price),
-    # using the exact same formula as plot_sc_results.py's compute_cost
-    # (prefill_price*prefill_nodes + decode_price*decode_nodes for
-    # disaggregated, price*total_nodes otherwise) and the same price table
-    # (mist_charts.pricing.PRICE_PER_HOUR == DEFAULT_PRICES for our 8
-    # SKUs) -- no need to recompute it here.
-    df["cost_per_hour"] = df["Cost"]
-
-    # TTFT_P99: run_T3.py already computes this at simulation time from the
-    # merged ongoing+completed TTFT lists (port of compute_ttft_percentiles
-    # / _flatten) -- no CSV string round-trip needed.
-    df["TTFT_P99"] = df["TTFT_p99"]
-
-    # Output_Throughput_Scaled = output_throughput * PERFORMANCE_SCALE_FACTOR[decode_hw]
-    df["Output_Throughput_Scaled"] = df["output_throughput"] * df["decode_hw"].map(PERFORMANCE_SCALE_FACTOR)
-
-    # Normalize by the MINIMUM (source variable is misnamed "max_throughput"
-    # but the behavior -- and the caption -- is "normalized against the
-    # lowest-throughput configuration").
-    min_throughput = df["Output_Throughput_Scaled"].min()
-    df["Normalized_Throughput"] = df["Output_Throughput_Scaled"] / min_throughput
-
-    df["Throughput_per_dollar"] = df["Output_Throughput_Scaled"] / df["cost_per_hour"]
-    min_throughput_per_dollar = df["Throughput_per_dollar"].min()
-    df["Normalized_Throughput_per_dollar"] = df["Throughput_per_dollar"] / min_throughput_per_dollar
-
-    df["prefill_vendor"] = df["prefill_hw"].map(VENDOR_OF_SKU)
-    df["decode_vendor"] = df["decode_hw"].map(VENDOR_OF_SKU)
-    df["is_multi_vendor"] = [
-        is_multi_vendor_config(hw, disagg) for hw, disagg in zip(df["Hardware"], df["is_disaggregated"])
-    ]
-    # Broad "Mixed" category (assign_category): Mixed unless prefill_hw ==
-    # decode_hw exactly. Used by Fig. 7's scatter only.
-    df["plot_category"] = [
-        vendor_of_config(hw, disagg) for hw, disagg in zip(df["Hardware"], df["is_disaggregated"])
-    ]
-
-    return df.reset_index(drop=True)
+def parse_hardware(use_case: str):
+    """Extract hardware names from a "UseCase" string, e.g.
+    "Poisson - 100RPS - h200_sxm-mi350x" -> ("h200_sxm", "mi350x", True).
+    Verbatim port of plot_sc_results.py's `parse_hardware`.
+    """
+    parts = use_case.split(" - ")
+    hw_part = parts[-1].strip()
+    if "-" in hw_part:
+        prefill_hw, decode_hw = hw_part.split("-", 1)
+        is_hetero = prefill_hw != decode_hw
+    else:
+        prefill_hw = decode_hw = hw_part
+        is_hetero = False
+    return prefill_hw, decode_hw, is_hetero
 
 
-# ─────────────────────────── Pareto front (verbatim port) ────────────────
+def parse_serving_name(serving_name: str):
+    """Extract total/prefill/decode node counts from a "Serving Name"
+    string (e.g. "BatchingMethod.DISAGGREGATED_8_2_6_0_..." or
+    "BatchingMethod.CHUNKED_8_2048"). Verbatim port of
+    plot_sc_results.py's `parse_serving_name`.
+    """
+    if "DISAGGREGATED" in serving_name:
+        m = re.search(r"DISAGGREGATED_(\d+)_(\d+)_(\d+)", serving_name)
+        if m:
+            return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    elif "CHUNKED" in serving_name:
+        m = re.search(r"CHUNKED_(\d+)_(\d+)", serving_name)
+        if m:
+            total = int(m.group(1))
+            return total, total, 0
+    return None, None, None
+
+
+def get_vendor(hw) -> str:
+    """Vendor name from a hardware handle. Verbatim port of
+    plot_sc_results.py's `get_vendor`, minus the Groq/Cerebras branches
+    (see NVIDIA_DEVICES et al. above for why)."""
+    hw = str(hw).lower()
+    if any(d in hw for d in NVIDIA_DEVICES):
+        return "Nvidia"
+    if any(d in hw for d in TPU_DEVICES):
+        return "TPU"
+    if any(d in hw for d in AMD_DEVICES):
+        return "AMD"
+    if any(d in hw for d in ETCHED_DEVICES):
+        return "Etched"
+    return "Other"
+
+
+def compute_cost(prefill_hw, decode_hw, total_nodes, prefill_nodes, decode_nodes, is_disaggregated, prices) -> float:
+    """Cost per hour. Verbatim port of plot_sc_results.py's `compute_cost`."""
+    if is_disaggregated:
+        return prices.get(prefill_hw, 0) * prefill_nodes + prices.get(decode_hw, 0) * decode_nodes
+    return prices.get(prefill_hw, 0) * total_nodes
+
+
+def _flatten(lst):
+    """Recursively flatten arbitrarily nested lists. Verbatim port of
+    plot_sc_results.py's `_flatten`."""
+    for item in lst:
+        if isinstance(item, list):
+            yield from _flatten(item)
+        else:
+            yield item
+
+
+def compute_ttft_percentiles(ongoing_str, ttft_str):
+    """Merge and flatten Ongoing_TTFT_latencies + TTFT_latencies, compute
+    P90/P95/P99. Verbatim port of plot_sc_results.py's
+    `compute_ttft_percentiles`."""
+    all_vals = []
+    for raw in (ongoing_str, ttft_str):
+        try:
+            parsed = ast.literal_eval(raw)
+            if isinstance(parsed, list):
+                all_vals.extend(_flatten(parsed))
+        except Exception:
+            pass
+    all_vals = [v for v in all_vals if isinstance(v, (int, float)) and not np.isnan(v)]
+    if not all_vals:
+        return np.nan, np.nan, np.nan
+    arr = np.array(all_vals, dtype=float)
+    return np.percentile(arr, 90), np.percentile(arr, 95), np.percentile(arr, 99)
 
 
 def compute_pareto_front(x_vals, y_vals) -> List[int]:
-    """Pareto front: minimize x, maximize y. Returns indices sorted by x."""
+    """Pareto front: minimize x, maximize y. Returns indices sorted by x.
+    Verbatim port of plot_sc_results.py's `compute_pareto_front`."""
     n = len(x_vals)
     if n == 0:
         return []
@@ -179,42 +228,86 @@ def compute_pareto_front(x_vals, y_vals) -> List[int]:
     return pareto_indices
 
 
-# ─────────────────────────── Fig. 7: side-by-side scatter (port of
-# plot_sc_results.py's build_side_by_side_plot) ───────────────────────────
+# ─────────────────────────── Data loading (port of plot_sc_results.py's
+# load_and_process) ───────────────────────────────────────────────────────
 
 
-def _config_annotation_text(row) -> str:
-    """Port of build_side_by_side_plot's per-star annotation text (the
-    hw_text / pd_tp_text / ann_text block). Uses our own Parallelism column
-    for prefill/decode TP/DP directly instead of the source's brute-force
-    "search for TP values whose device counts sum to 8" loop -- same text,
-    computed from data we already have rather than re-derived by guessing.
-    """
-    prefill_name = SKU_DISPLAY_NAMES.get(row["prefill_hw"], row["prefill_hw"])
-    if row["is_hetero"]:
-        hw_text = f"{prefill_name}:{SKU_DISPLAY_NAMES.get(row['decode_hw'], row['decode_hw'])}"
-    else:
-        hw_text = prefill_name
+def load_and_process(use_case: str, prices: Optional[Dict[str, float]] = None) -> pd.DataFrame:
+    """Load one use case's results CSV and derive every column the plots
+    need. Faithful port of plot_sc_results.py's `load_and_process`,
+    differing only in where the CSV path and price table come from."""
+    if prices is None:
+        prices = PRICE_PER_HOUR
 
-    if row["is_disaggregated"]:
-        prefill_p, decode_p = row["Parallelism"].split("-", 1)
-        prefill_p = ast.literal_eval(prefill_p)
-        decode_p = ast.literal_eval(decode_p)
-        p_inst, d_inst = prefill_p["DP"], decode_p["DP"]
-        p_tp, d_tp = prefill_p["TP"], decode_p["TP"]
-        pd_tp_text = f"{p_inst}P:{d_inst}D, TP: (P={p_tp}, D={d_tp})"
-    else:
-        parallelism = row["Parallelism"]
-        p = ast.literal_eval(parallelism) if isinstance(parallelism, str) else parallelism
-        total_nodes = p["DP"]
-        # NOTE: ported verbatim from the source, including its label -- for
-        # non-disaggregated rows the source annotates "TP=<node count>",
-        # which is actually the client/DP count, not the TP degree. This
-        # looks like a labeling quirk in the ported source; kept as-is for
-        # faithfulness rather than silently "corrected".
-        pd_tp_text = f"TP={total_nodes}"
+    cfg = USE_CASES[use_case]
+    path = resolve_results("T3", cfg["results_file"])
+    df = pd.read_csv(path)
 
-    return f"{hw_text}\n{pd_tp_text}"
+    # Parse hardware first
+    hw_info = df["UseCase"].apply(parse_hardware)
+    df["prefill_hw"] = hw_info.apply(lambda x: x[0])
+    df["decode_hw"] = hw_info.apply(lambda x: x[1])
+    df["is_hetero"] = hw_info.apply(lambda x: x[2])
+    df["is_disaggregated"] = df["Serving Name"].str.contains("DISAGGREGATED")
+    # Filter out rows with hardware in IGNORE_HW
+    df = df[~df["prefill_hw"].isin(IGNORE_HW)]
+    df = df[~df["decode_hw"].isin(IGNORE_HW)]
+    # Parse serving name
+    serving_info = df["Serving Name"].apply(parse_serving_name)
+    df["total_nodes"] = serving_info.apply(lambda x: x[0])
+    df["prefill_nodes"] = serving_info.apply(lambda x: x[1])
+    df["decode_nodes"] = serving_info.apply(lambda x: x[2])
+
+    # Compute cost
+    df["cost_per_hour"] = df.apply(
+        lambda row: compute_cost(
+            row["prefill_hw"], row["decode_hw"],
+            row["total_nodes"], row["prefill_nodes"], row["decode_nodes"],
+            row["is_disaggregated"], prices,
+        ), axis=1,
+    )
+
+    # TTFT percentiles from flattened Ongoing_TTFT_latencies + TTFT_latencies
+    ttft_pcts = df.apply(
+        lambda row: compute_ttft_percentiles(row["Ongoing_TTFT_latencies"], row["TTFT_latencies"]), axis=1
+    )
+    df["TTFT_P90"] = ttft_pcts.apply(lambda x: x[0])
+    df["TTFT_P95"] = ttft_pcts.apply(lambda x: x[1])
+    df["TTFT_P99"] = ttft_pcts.apply(lambda x: x[2])
+
+    # Throughput
+    df["Throughput"] = df["total_token_throughput"]
+    df["Output_Throughput"] = df["output_throughput"]
+    df["Output_Throughput_Scaled"] = df["Output_Throughput"] * df["decode_hw"].map(PERFORMANCE_SCALE_FACTOR)
+    # Normalize throughput metrics by the MINIMUM value (source variable is
+    # misnamed "max_throughput" but the behavior -- and the caption -- is
+    # "normalized against the lowest-throughput configuration").
+    min_throughput = df["Output_Throughput_Scaled"].min()
+    df["Normalized_Throughput"] = df["Output_Throughput_Scaled"] / min_throughput
+
+    # Cost-normalized throughput
+    df["Throughput_per_dollar"] = df["Output_Throughput_Scaled"] / df["cost_per_hour"]
+    min_throughput_per_dollar = df["Throughput_per_dollar"].min()
+    df["Normalized_Throughput_per_dollar"] = df["Throughput_per_dollar"] / min_throughput_per_dollar
+
+    # Assign plotting category
+    df["prefill_vendor"] = df["prefill_hw"].apply(get_vendor)
+    df["decode_vendor"] = df["decode_hw"].apply(get_vendor)
+    df["is_multi_vendor"] = df["prefill_vendor"] != df["decode_vendor"]
+    df["is_homogeneous"] = df["prefill_hw"] == df["decode_hw"]
+
+    def assign_category(row):
+        if row["is_multi_vendor"] or not row["is_homogeneous"]:
+            return "Mixed"
+        return f"{row['prefill_vendor']}"
+
+    df["plot_category"] = df.apply(assign_category, axis=1)
+
+    return df.reset_index(drop=True)
+
+
+# ─────────────────────────── Fig. 7: side-by-side scatter (verbatim port
+# of plot_sc_results.py's build_side_by_side_plot) ─────────────────────────
 
 
 def build_side_by_side_plot(
@@ -225,8 +318,6 @@ def build_side_by_side_plot(
     rank2_offset: Tuple[int, int],
     font_sizes: Optional[Dict] = None,
 ):
-    """Port of plot_sc_results.py's build_side_by_side_plot, verbatim other
-    than reading our own dataframe columns (see module docstring)."""
     if font_sizes is None:
         font_sizes = FONT_SIZES
 
@@ -243,7 +334,7 @@ def build_side_by_side_plot(
     marker_size = 100
     marker_alpha = 0.7
 
-    # Two best points: highest Throughput_per_dollar with TTFT_P99 < slo_ms.
+    # Find best points: highest throughput/$ with TTFT P99 < slo_ms
     best_rows: List[pd.Series] = []
     mask = df["TTFT_P99"] < slo_ms
     if mask.any():
@@ -256,17 +347,48 @@ def build_side_by_side_plot(
     for idx, (y_col, y_lbl) in enumerate(y_metrics):
         ax = axes[idx]
 
+        # Highlight best configurations if found
         for rank, b_row in enumerate(best_rows, start=1):
             ax.scatter(
                 b_row[x_metric[0]], b_row[y_col],
                 marker="*", s=900, color="gold", edgecolor="black",
                 linewidths=2, zorder=10,
             )
+
+            # Add annotation in the 2nd subplot
             if idx == 1:
-                ann_text = f"#{rank}: {_config_annotation_text(b_row)}"
+                hw_text = (
+                    f"{SKU_DISPLAY_NAMES.get(b_row['prefill_hw'], b_row['prefill_hw'])}:"
+                    f"{SKU_DISPLAY_NAMES.get(b_row['decode_hw'], b_row['decode_hw'])}"
+                    if b_row["is_hetero"]
+                    else f"{SKU_DISPLAY_NAMES.get(b_row['prefill_hw'], b_row['prefill_hw'])}"
+                )
+
+                if b_row["is_disaggregated"]:
+                    p_inst = int(b_row["prefill_nodes"])
+                    d_inst = int(b_row["decode_nodes"])
+                    p_tp, d_tp = None, None
+                    for p in [1, 2, 4, 8]:
+                        for d in [1, 2, 4, 8]:
+                            if p_inst * p + d_inst * d == 8:
+                                p_tp, d_tp = p, d
+                                break
+                        if p_tp is not None:
+                            break
+
+                    if p_tp is not None:
+                        pd_tp_text = f"{p_inst}P:{d_inst}D, TP: (P={p_tp}, D={d_tp})"
+                    else:
+                        pd_tp_text = f"{p_inst}P:{d_inst}D, TP={b_row['total_nodes']}"
+                else:
+                    pd_tp_text = f"TP={b_row['total_nodes']}"
+
+                ann_text = f"#{rank}: {hw_text}\n{pd_tp_text}"
+
                 x_offset, y_offset = rank1_offset if rank == 1 else rank2_offset
                 ha = "right" if x_offset < 0 else "left"
                 va = "bottom" if y_offset > 0 else "top"
+
                 ax.annotate(
                     ann_text,
                     (b_row[x_metric[0]], b_row[y_col]),
@@ -279,6 +401,7 @@ def build_side_by_side_plot(
                     verticalalignment=va,
                 )
 
+        # Plot scatter points by category
         for cat_name, style in CATEGORY_STYLES.items():
             cat_df = df[df["plot_category"] == cat_name]
             if len(cat_df) > 0:
@@ -289,44 +412,66 @@ def build_side_by_side_plot(
                     label=cat_name, zorder=3,
                 )
 
-        homogeneous_df = df[df["is_homogeneous"]]
-        heterogeneous_df = df[~df["is_homogeneous"]]
+        # Compute and plot Pareto fronts
+        homogenous_df = df[df["is_homogeneous"]]
+        heterogenous_df = df[~df["is_homogeneous"]]
+
         for grp_df, line_color, line_style, _line_label in [
-            (homogeneous_df, "#d62728", "-", "Homogenous Deployement"),
-            (heterogeneous_df, "#1f77b4", "--", "Heterogenous Deployement"),
+            (homogenous_df, "#d62728", "-", "Homogenous Deployement"),  # Crimson Red for Homo
+            (heterogenous_df, "#1f77b4", "--", "Heterogenous Deployement"),  # Blue for Hetero
         ]:
             if len(grp_df) == 0:
                 continue
+
             xg = grp_df[x_metric[0]].to_numpy(dtype=float)
             yg = grp_df[y_col].to_numpy(dtype=float)
             valid_g = ~(np.isnan(xg) | np.isnan(yg))
+
             if valid_g.sum() == 0:
                 continue
+
             pidx = compute_pareto_front(xg[valid_g], yg[valid_g])
             if not pidx:
                 continue
+
             orig_g = np.where(valid_g)[0]
-            px, py = xg[orig_g[pidx]], yg[orig_g[pidx]]
+            px = xg[orig_g[pidx]]
+            py = yg[orig_g[pidx]]
             sort_order = np.argsort(px)
             px, py = px[sort_order], py[sort_order]
+
             ax.plot(px, py, color=line_color, linestyle=line_style, linewidth=2.5, label="_nolegend_", zorder=2)
 
+        # Set log scale for x-axis
         ax.set_xscale("log")
+
+        # Add light green shaded area for x < slo_ms
         ax.axvspan(0, slo_ms, color="#d4edda", alpha=0.4, zorder=0)
+
+        # Set labels
         ax.set_xlabel(x_metric[1], fontsize=font_sizes["axis_label"])
         ax.set_ylabel(y_lbl, fontsize=font_sizes["axis_label"])
+
+        # Set tick label sizes
         ax.tick_params(axis="both", labelsize=font_sizes["tick_label"])
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+
+        # Add grid
         ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
 
+    # Create a single legend for the entire figure at the top in a single row
     handles, labels = axes[0].get_legend_handles_labels()
     unique_labels = dict(zip(labels, handles))
+
+    # Always draw the legend to identically lock the bounding box for both PDFs
     leg = fig.legend(
         unique_labels.values(), unique_labels.keys(), loc="lower center", bbox_to_anchor=(0.47, 0.94),
         ncol=len(unique_labels), fontsize=font_sizes["legend"], frameon=True, framealpha=0.3,
         columnspacing=0.8, handletextpad=0, labelspacing=0, handlelength=1.2,
     )
+
     if not legend:
+        # Make it invisible but preserve its layout footprint
         for t in leg.get_texts():
             t.set_alpha(0)
         for h in (leg.legendHandles if hasattr(leg, "legendHandles") else leg.legend_handles):
@@ -337,10 +482,11 @@ def build_side_by_side_plot(
             leg.get_frame().set_linewidth(0)
 
     if not mask.any():
-        # Defensive, graceful degradation beyond what the ported source
-        # does (it just silently omits stars): make the "nobody met the
-        # SLO" state explicit on the figure itself, not just in a console
-        # warning, without fabricating a winner.
+        # Defensive, beyond the ported source (which just silently omits
+        # stars): make the "nobody met the SLO" state explicit on the
+        # figure itself, without fabricating a winner. Matters for a tiny
+        # smoke-test sweep (few configs, short sim window), where no
+        # config may meet the SLO at all.
         for ax in axes:
             ax.text(
                 0.5, 0.5, f"No configuration met\nTTFT P99 < {slo_ms:g} ms",
@@ -365,40 +511,48 @@ def plot_fig7(use_case: str) -> None:
     plt.close(fig)
 
 
-# ─────────────────────────── Fig. 8: 2x2 bars (port of
-# plot_bar_results.py's plot_column + build_2x2_plots) ────────────────────
+# ─────────────────────────── Fig. 8: 2x2 bars (verbatim port of
+# plot_bar_results.py's plot_column + build_2x2_plots) ─────────────────────
 
 
 def plot_column(ax1, ax2, df: pd.DataFrame, slo_ms: float, title: str, font_sizes: Dict) -> None:
+    # Filter by SLO
     df_valid = df[df["TTFT_P99"] < slo_ms]
     if df_valid.empty:
         print(f"Warning: No data points meet the SLO of {slo_ms}ms for {title}.")
 
-    vendors_present = (
-        df_valid[~df_valid["is_multi_vendor"]]["prefill_vendor"].unique() if not df_valid.empty else []
-    )
+    # Extract vendors present in valid data, excluding multi-vendor configurations
+    vendors_present = df_valid[~df_valid["is_multi_vendor"]]["prefill_vendor"].unique() if not df_valid.empty else []
+
+    # Ordered list of known vendors (VENDOR_CATEGORY_ORDER ends in "Mixed",
+    # which is appended separately below, exactly as the source's own
+    # `all_known_vendors` list -- which never includes "Mixed" -- does).
     vendors = [v for v in VENDOR_CATEGORY_ORDER if v != "Mixed" and v in vendors_present]
+
     categories = vendors + ["Mixed"]
 
-    homo_tp: List[float] = []
-    homo_cost: List[float] = []
+    homo_tp, homo_cost = [], []
 
     for v in vendors:
         v_df = df_valid[(df_valid["prefill_vendor"] == v) & (df_valid["decode_vendor"] == v)]
+
+        # Homogeneous
         homo_df = v_df[v_df["is_homogeneous"]]
         if not homo_df.empty:
-            best_row = homo_df.loc[homo_df["Normalized_Throughput_per_dollar"].idxmax()]
+            best_idx = homo_df["Normalized_Throughput_per_dollar"].idxmax()
+            best_row = homo_df.loc[best_idx]
             homo_tp.append(best_row["Normalized_Throughput_per_dollar"])
             homo_cost.append(best_row["cost_per_hour"])
         else:
             homo_tp.append(np.nan)
             homo_cost.append(np.nan)
 
-    # Mixed bar: narrow definition (is_multi_vendor), NOT the broad
-    # plot_category used by Fig. 7's scatter -- see module docstring WARNING.
+    # Mixed (Multi Vendor)
     mixed_df = df_valid[df_valid["is_multi_vendor"]]
     if not mixed_df.empty:
-        best_row = mixed_df.loc[mixed_df["Normalized_Throughput_per_dollar"].idxmax()]
+        best_idx = mixed_df["Normalized_Throughput_per_dollar"].idxmax()
+        best_row = mixed_df.loc[best_idx]
+        # We plot Mixed as a solid bar in the "homogeneous" slot (or centered)
         homo_tp.append(best_row["Normalized_Throughput_per_dollar"])
         homo_cost.append(best_row["cost_per_hour"])
     else:
@@ -409,23 +563,26 @@ def plot_column(ax1, ax2, df: pd.DataFrame, slo_ms: float, title: str, font_size
     width = 0.35
 
     for i, cat in enumerate(categories):
-        style_key = cat if cat in ("Mixed", "Etched", "TPU", "AMD", "Nvidia") else "Nvidia"
-        c = VENDOR_COLORS.get(style_key, "#7f7f7f")
-        ec = {"Mixed": "navy", "Etched": "#a65100", "TPU": "#5e3c81", "AMD": "#0e7a85", "Nvidia": "darkgreen"}.get(
-            style_key, "#333333"
-        )
+        style = CATEGORY_STYLES.get(cat, CATEGORY_STYLES["Nvidia"])
+        c, ec = style["color"], style["edgecolor"]
+
+        # Plot 1: Peak Norm. Tokens/s/$
         if not np.isnan(homo_tp[i]):
             ax1.bar(x[i], homo_tp[i], width if cat != "Mixed" else width * 1.5, color=c, edgecolor=ec, linewidth=1.5)
+
+        # Plot 2: Deployment Cost
         if not np.isnan(homo_cost[i]):
             ax2.bar(x[i], homo_cost[i], width if cat != "Mixed" else width * 1.5, color=c, edgecolor=ec, linewidth=1.5)
 
-    max_sv_tp = -1.0
+    # Find the best single vendor
+    max_sv_tp = -1
     sv_x = None
     sv_cost_of_best_tp = None
+
     n_categories = len(categories)
     mv_x = x[-1]
-    mv_tp = homo_tp[-1]
-    mv_cost = homo_cost[-1]
+    mv_tp = homo_tp[-1]  # Mixed is stored in homo_tp
+    mv_cost = homo_cost[-1]  # Mixed is stored in homo_cost
 
     for i in range(n_categories - 1):
         if not np.isnan(homo_tp[i]) and homo_tp[i] > max_sv_tp:
@@ -433,16 +590,19 @@ def plot_column(ax1, ax2, df: pd.DataFrame, slo_ms: float, title: str, font_size
             sv_x = x[i]
             sv_cost_of_best_tp = homo_cost[i]
 
+    # Draw arrow on top plot (Throughput/$)
     if max_sv_tp > 0 and not np.isnan(mv_tp):
         pct_increase = (mv_tp - max_sv_tp) / max_sv_tp * 100
         ax1.annotate(
             "", xy=(mv_x, mv_tp), xytext=(sv_x, max_sv_tp),
             arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=-0.2", color="black", lw=1.5),
         )
-        text_x, text_y = (sv_x + mv_x) / 2, (max_sv_tp + mv_tp) / 2
-        # Mixed does not always beat the best single vendor -- colour and sign
-        # the label by the actual direction rather than assuming a gain
-        # (a hardcoded "+" previously rendered a loss as "+-11.1%").
+        text_x = (sv_x + mv_x) / 2
+        text_y = (max_sv_tp + mv_tp) / 2
+
+        # KEPT FIX (do not revert): the source hardcodes a "+" here
+        # (f"+{pct_increase:.1f}%"), so a loss renders as "+-11.1%".
+        # Render signed and color by actual direction instead.
         tp_label = f"+{pct_increase:.1f}%" if pct_increase >= 0 else f"{pct_increase:.1f}%"
         ax1.text(
             text_x, text_y, tp_label, ha="center", va="bottom",
@@ -451,15 +611,18 @@ def plot_column(ax1, ax2, df: pd.DataFrame, slo_ms: float, title: str, font_size
             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="black", alpha=0.8),
         )
 
+    # Draw arrow on bottom plot (Cost reduction)
     if sv_cost_of_best_tp is not None and not np.isnan(mv_cost):
         pct_reduction = (sv_cost_of_best_tp - mv_cost) / sv_cost_of_best_tp * 100
+        # Horizontal dashed line from best sv to mv
         ax2.plot([sv_x, mv_x], [sv_cost_of_best_tp, sv_cost_of_best_tp], color="green", linestyle=":", linewidth=1.5)
+        # Arrow from best-single-vendor cost to Mixed cost
         ax2.annotate(
             "", xy=(mv_x, mv_cost), xytext=(mv_x, sv_cost_of_best_tp),
             arrowprops=dict(arrowstyle="->", color="green", lw=2),
         )
-        # A positive pct_reduction is a genuine saving; a negative one means
-        # Mixed costs MORE, so colour it as a regression rather than a win.
+        # KEPT FIX: as above -- a negative pct_reduction means Mixed costs
+        # MORE, so color it as a regression rather than a win.
         cheaper = pct_reduction >= 0
         label = f"-{pct_reduction:.1f}%" if cheaper else f"+{-pct_reduction:.1f}%"
         colour = "green" if cheaper else "firebrick"
@@ -477,7 +640,8 @@ def plot_column(ax1, ax2, df: pd.DataFrame, slo_ms: float, title: str, font_size
         )
 
     ax1.set_title(title, fontsize=font_sizes["subplot_title"])
-    for ax in (ax1, ax2):
+
+    for ax in [ax1, ax2]:
         ax.set_xticks(x)
         ax.set_xticklabels(categories, fontsize=font_sizes["tick_label"], rotation=45, ha="right")
         ax.tick_params(axis="y", labelsize=font_sizes["tick_label"])
@@ -491,14 +655,19 @@ def build_2x2_plots(df_chat: pd.DataFrame, df_codegen: pd.DataFrame, slo_chat: f
     plt.style.use("seaborn-v0_8-paper")
     fig, axes = plt.subplots(2, 2, figsize=(20, 14), constrained_layout=True)
 
-    # Column 0: Chat Conversation; Column 1: Code Gen (High Prefix-KV Reuse)
-    # -- matches plot_bar_results.py's build_2x2_plots column assignment.
+    # Column 0 (left): Chat Conversation; Column 1 (right): Code Gen (High
+    # Prefix-KV Reuse) -- matches where plot_bar_results.py's
+    # build_2x2_plots actually places each df (axes[:, 0] for df_wo_kv/
+    # chat, axes[:, 1] for df_kv/codegen), not its misleading "Column 0" /
+    # "Column 1" comments, which are swapped relative to the real axes
+    # indices used.
     plot_column(axes[0, 0], axes[1, 0], df_chat, slo_chat, "Chat Conversation", font_sizes)
     plot_column(axes[0, 1], axes[1, 1], df_codegen, slo_codegen, "Code Gen (High Prefix-KV Reuse)", font_sizes)
 
     axes[0, 0].set_ylabel("Peak Norm. Tokens/s/$", fontsize=font_sizes["axis_label"])
     axes[1, 0].set_ylabel("Deployment Cost ($/hr)", fontsize=font_sizes["axis_label"])
 
+    # Share Y axis across columns for fair comparison
     for row in range(2):
         ylim0 = axes[row, 0].get_ylim()
         ylim1 = axes[row, 1].get_ylim()
@@ -507,10 +676,14 @@ def build_2x2_plots(df_chat: pd.DataFrame, df_codegen: pd.DataFrame, slo_chat: f
         axes[row, 0].set_ylim(min_y, max_y)
         axes[row, 1].set_ylim(min_y, max_y)
 
-    # Legend intentionally not drawn: plot_bar_results.py builds
-    # solid_patch/mixed_patch handles but its fig.legend(...) call is
-    # commented out in the source, so no legend was in the published
-    # figure either. Preserved faithfully.
+    # Manual legend handles built (matching the source) but not drawn:
+    # plot_bar_results.py's own fig.legend(...) call for these is
+    # commented out, so no legend was in the published figure either.
+    _solid_patch = mpatches.Patch(facecolor="gray", edgecolor="black", label="Single Vendor (Homogeneous)")
+    _mixed_patch = mpatches.Patch(
+        facecolor=CATEGORY_STYLES["Mixed"]["color"], edgecolor=CATEGORY_STYLES["Mixed"]["edgecolor"],
+        label="Mixed (Multi-Vendor)",
+    )
 
     return fig
 

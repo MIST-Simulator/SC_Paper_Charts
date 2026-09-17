@@ -176,13 +176,21 @@ MAX_CONTEXT_TOKENS = 120_000
 BITS = "fp8"
 
 
+# The author's schema (GenA_Paper_charts/SC26/experiment_runner.py's
+# `columns` list, sourced from `run_simulation`'s return value): what
+# plot_T3.py's ported `load_and_process` reads. "UseCase" and "Serving
+# Name" are concatenated strings (built by `build_usecase`/
+# `build_serving_name` below) that the plotting code regex-parses for
+# hardware, parallelism, batching strategy and node counts. Everything
+# else -- Cost, TTFT_P99, per-vendor category, etc. -- is derived
+# downstream by the plotting code, not stored here, exactly as in the
+# author's own CSVs.
 RESULT_COLUMNS = [
-    "UseCase", "Serving Name", "Batching_Strategy", "Hardware", "Parallelism",
-    "Max_Batch_Size", "Chunk_Size", "Cost", "HW_Combination", "Vendor",
-    "Energy_Used", "TTFT_avg", "TPOT_avg", "rps",
-    "TTFT_p50", "TTFT_p90", "TTFT_p95", "TTFT_p99",
-    "output_throughput", "total_token_throughput", "tokens_per_dollar",
-    "num_completed", "num_ttft_observed",
+    "UseCase", "Serving Name", "Energy Used", "TTFT", "TPOT", "rps",
+    "T50_latency", "T90_latency", "T95_latency", "T99_latency",
+    "interactivity", "output_throughput", "total_token_throughput",
+    "Input Lens", "Output Lens", "Running Input Lens", "Running Output Lens",
+    "Ongoing_TTFT_latencies", "TTFT_latencies", "latencies",
 ]
 
 
@@ -274,16 +282,47 @@ def _row_prefill_decode(row) -> tuple:
     return ast.literal_eval(prefill_str), ast.literal_eval(decode_str)
 
 
-def build_serving_name(row) -> str:
-    """Unique, human-readable id for one search-space row: embeds every
-    field distinguishing it (unlike the ported scripts' scheduler-config
-    name, which can collide across different hardware/TP choices), so the
-    (UseCase, Serving Name) resumability key is unambiguous.
+# Fixed disaggregated-engine params this script always simulates with (see
+# run_one_config's MISTCoordinatorDisagg call below) -- baked into
+# build_serving_name's DISAGGREGATED naming since the author's own
+# `schedulerExperimentConfigs.name` embeds them literally.
+_DISAGG_MIXED = 0
+_DISAGG_CONVERT = False
+_DISAGG_DIFF_DECODE = True
+_DISAGG_MAX_PENDING_PROMPT_TOKENS = 320_000
+
+
+def build_usecase(row, rps: float) -> str:
+    """Port of experiment_runner.py's `exp_name` ("Poisson - {rps}RPS -
+    {hardware}"). `row["Hardware"]` is already "<prefill>-<decode>" for
+    disaggregated rows (deployment_space.get_search_space), so one formula
+    covers both batching strategies. `rps:g` drops a trailing ".0" the way
+    an un-passed (int-valued) argparse default would -- matching the
+    author's real CSVs' "100RPS", not "100.0RPS".
     """
-    return (
-        f"{row['Hardware']}|{row['Parallelism']}|{row['Batching_Strategy'].name}"
-        f"|bs{row['Max_Batch_Size']}|cs{row['Chunk_Size']}"
-    )
+    return f"Poisson - {rps:g}RPS - {row['Hardware']}"
+
+
+def build_serving_name(row) -> str:
+    """Port of ISCA26/Batching_method_comparisions.py's
+    `schedulerExperimentConfigs.name` -- what plot_sc_results.py's
+    `parse_serving_name` regex-parses for node counts. Doesn't encode TP
+    (neither does the source): safe here only because our search space
+    fixes num_devices=8 and PP=1, so TP in {1,2} implies a distinct DP
+    (client count) per row and thus a distinct name; see
+    docs/FINDINGS.md#t3 for this inherited limitation.
+    """
+    strategy = row["Batching_Strategy"]
+    if strategy == BatchingMethod.DISAGGREGATED:
+        prefill_p, decode_p = _row_prefill_decode(row)
+        num_clients = prefill_p["DP"] + decode_p["DP"]
+        return (
+            f"{strategy}_{num_clients}_{prefill_p['DP']}_{decode_p['DP']}_{_DISAGG_MIXED}"
+            f"_Convert{_DISAGG_CONVERT}_DiffDecode:{_DISAGG_DIFF_DECODE}"
+            f"_{_DISAGG_MAX_PENDING_PROMPT_TOKENS}tokens"
+        )
+    num_clients = row["Parallelism"]["DP"]
+    return f"{strategy}_{num_clients}_{row['Chunk_Size']}"
 
 
 def select_fast_eval_subset(df: pd.DataFrame, target_n: int = 150) -> pd.DataFrame:
@@ -385,18 +424,19 @@ def select_fast_eval_subset(df: pd.DataFrame, target_n: int = 150) -> pd.DataFra
     return df.loc[sorted(selected)].reset_index(drop=True)
 
 
-def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -> Dict:
-    """Simulate one deployment_space row and summarize the result.
+def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float, rps: float) -> Dict:
+    """Simulate one deployment_space row and return one row of the author's
+    20-column schema (RESULT_COLUMNS).
 
     Inlined port of `run_simulation` (ISCA26/Batching_method_comparisions.py)
     for T3's fixed PP=1 / TP in {1,2} search, building the coordinator
     directly from the row instead of that module's config-indirection layer.
-    TTFT percentiles are computed here (not via a persisted per-request CSV)
-    from the union of *ongoing* requests still in `engine.scheduler.running`
-    (which already have a first token, `req.data[0]`) and *completed*
-    requests -- matching plot_sc_results.py's `compute_ttft_percentiles`.
-    Completed-only would understate P99 for saturated configs, where most
-    in-flight requests never finish inside the sim window.
+    The list-valued fields (Input/Output Lens, Ongoing_TTFT_latencies,
+    TTFT_latencies, latencies) are ported verbatim from `run_simulation`'s
+    return value -- raw per-request/per-engine data, not precomputed
+    percentiles -- so `plot_T3.py`'s ported `compute_ttft_percentiles` /
+    `load_and_process` derive the same numbers the author's plotting code
+    would from a real experiment_runner.py CSV.
     """
     req_queue = deepcopy(base_req_queue)
     is_disagg = row["Batching_Strategy"] == BatchingMethod.DISAGGREGATED
@@ -464,53 +504,74 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
     if engines is None:
         engines = coordinator.GenA_engines
 
-    ongoing_ttft = [
-        req.data[0].finished_time - req.metrics.arrival_time
-        for engine in engines
-        for req in engine.scheduler.running
-        if len(req.data) > 0
-    ]
-    completed_ttft = [
-        req.data[0].finished_time - req.metrics.arrival_time
-        for req in coordinator.completed_requests if len(req.data) > 0
-    ]
-    ttft_latencies = np.array(ongoing_ttft + completed_ttft)
+    completed = coordinator.completed_requests
     stats = coordinator.global_stats
-    if len(ttft_latencies):
-        percentiles = {f"TTFT_p{p}": float(np.percentile(ttft_latencies, p)) for p in (50, 90, 95, 99)}
-    else:
-        percentiles = {f"TTFT_p{p}": np.nan for p in (50, 90, 95, 99)}
-
     energy_used = sum(engine.energy_consumed for engine in engines)
-    cost_per_hour = row["Cost"]
-    tokens_per_dollar = stats.output_throughput / cost_per_hour if cost_per_hour else np.nan
+
+    # Port of run_simulation's return-value construction (ISCA26/
+    # Batching_method_comparisions.py), verbatim other than reading
+    # `engines` (see above) instead of `coordinator.GenA_engines` directly,
+    # and guarding the TTFT list comprehensions with `len(req.data) > 0`
+    # (a request with zero data beats -- possible for one still waiting on
+    # its very first scheduling decision when the sim window ends -- would
+    # otherwise raise IndexError; the author's `run_simulation` has no such
+    # guard for its completed-request TTFT list, but every one of ours is
+    # already defensive here, so this keeps that same safety without
+    # changing the schema).
+    # float(...): req.input_len/output_len are numpy.float64 (from the
+    # trace CSV's dtype), whose repr() is "np.float64(211.0)" under
+    # numpy>=2 -- not valid Python-literal syntax, so
+    # ast.literal_eval would fail to parse this column back out of the
+    # CSV. Casting to plain float here keeps the list's str()/to_csv
+    # serialization ast.literal_eval-compatible, matching the author's
+    # real CSVs (plain floats throughout).
+    input_lens = [float(req.input_len) for req in completed]
+    output_lens = [float(req.output_len) for req in completed]
+    running_input_lens = [[float(req.input_len) for req in engine.scheduler.running] for engine in engines]
+    running_output_lens = [[req.gen_tokens for req in engine.scheduler.running] for engine in engines]
+    # float(...) here too -- req.metrics.finished_time is a numpy.float64
+    # (unlike req.data[*].finished_time, a plain float), so `latencies`
+    # would otherwise hit the same ast.literal_eval-incompatible
+    # "np.float64(...)" repr issue as Input/Output Lens above.
+    ongoing_ttft_latencies = [
+        [
+            float(req.data[0].finished_time - req.metrics.arrival_time)
+            for req in engine.scheduler.running if len(req.data) > 0
+        ]
+        for engine in engines
+    ]
+    ttft_latencies = [
+        float(req.data[0].finished_time - req.metrics.arrival_time) for req in completed if len(req.data) > 0
+    ]
+    latencies = [float(req.metrics.finished_time - req.metrics.arrival_time) for req in completed]
 
     return {
+        "UseCase": build_usecase(row, rps),
         "Serving Name": build_serving_name(row),
-        "Batching_Strategy": row["Batching_Strategy"].name,
-        "Hardware": row["Hardware"],
-        "Parallelism": row["Parallelism"],
-        "Max_Batch_Size": row["Max_Batch_Size"],
-        "Chunk_Size": row["Chunk_Size"],
-        "Cost": cost_per_hour,
-        "HW_Combination": row["HW_Combination"],
-        "Vendor": vendor_of_config(row["Hardware"], is_disagg),
-        "Energy_Used": energy_used,
-        "TTFT_avg": stats.TTFT,
-        "TPOT_avg": stats.TPOT,
+        "Energy Used": energy_used,
+        "TTFT": stats.TTFT,
+        "TPOT": stats.TPOT,
         "rps": stats.rps,
-        **percentiles,
+        "T50_latency": stats.T50_latency,
+        "T90_latency": stats.T90_latency,
+        "T95_latency": stats.T95_latency,
+        "T99_latency": stats.T99_latency,
+        "interactivity": stats.interactivity,
         "output_throughput": stats.output_throughput,
         # Can be negative for KV-retrieval (codegen) rows: MIST's
         # total_token_throughput sums (input_len - past_context -
         # remaining_prefill_tokens), which goes negative once past_context
-        # (KV_Tokens) exceeds input_len -- an upstream accounting quirk.
-        # tokens_per_dollar (below) uses output_throughput instead, so it's
-        # unaffected.
+        # (KV_Tokens) exceeds input_len -- an upstream accounting quirk,
+        # also present (as negative total_token_throughput values) in the
+        # author's own real codegen CSV.
         "total_token_throughput": stats.total_token_throughput,
-        "tokens_per_dollar": tokens_per_dollar,
-        "num_completed": len(coordinator.completed_requests),
-        "num_ttft_observed": len(ttft_latencies),
+        "Input Lens": input_lens,
+        "Output Lens": output_lens,
+        "Running Input Lens": running_input_lens,
+        "Running Output Lens": running_output_lens,
+        "Ongoing_TTFT_latencies": ongoing_ttft_latencies,
+        "TTFT_latencies": ttft_latencies,
+        "latencies": latencies,
     }
 
 
@@ -520,6 +581,38 @@ def _out_path(filename: str, args: argparse.Namespace) -> Path:
         out_dir.mkdir(parents=True, exist_ok=True)
         return out_dir / filename
     return result_path("T3", filename)
+
+
+def _flatten(lst) -> List:
+    """Port of plot_sc_results.py's `_flatten` (recursively flatten
+    arbitrarily nested lists) -- reused here only for this script's own
+    console diagnostics (SLO count / top-5), not part of the schema.
+    """
+    out = []
+    for item in lst:
+        if isinstance(item, list):
+            out.extend(_flatten(item))
+        else:
+            out.append(item)
+    return out
+
+
+def _ttft_p99(ongoing_str: str, ttft_str: str) -> float:
+    """Console-diagnostics-only TTFT P99, computed the same way
+    plot_sc_results.py's `compute_ttft_percentiles` will when plotting:
+    literal-eval + flatten `Ongoing_TTFT_latencies` and `TTFT_latencies`,
+    then take the 99th percentile of the union.
+    """
+    vals: List[float] = []
+    for raw in (ongoing_str, ttft_str):
+        try:
+            parsed = ast.literal_eval(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, list):
+                vals.extend(_flatten(parsed))
+        except Exception:
+            pass
+    vals = [v for v in vals if isinstance(v, (int, float)) and not np.isnan(v)]
+    return float(np.percentile(vals, 99)) if vals else float("nan")
 
 
 def run_use_case(use_case: str, args: argparse.Namespace) -> int:
@@ -594,10 +687,9 @@ def run_use_case(use_case: str, args: argparse.Namespace) -> int:
     else:
         pd.DataFrame(columns=RESULT_COLUMNS).to_csv(results_path, index=False)
 
-    usecase_label = f"{use_case}-{args.rps}rps"
     jobs = [
         row for _, row in run_df.iterrows()
-        if (usecase_label, build_serving_name(row)) not in completed_keys
+        if (build_usecase(row, args.rps), build_serving_name(row)) not in completed_keys
     ]
     print(f"[{use_case}] {len(jobs)}/{len(run_df)} configs remaining to simulate")
 
@@ -605,7 +697,7 @@ def run_use_case(use_case: str, args: argparse.Namespace) -> int:
     if jobs:
         with _quiet_stdout(), concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
             future_to_row = {
-                executor.submit(run_one_config, row, base_req_queue, MODEL, args.sim_time): row
+                executor.submit(run_one_config, row, base_req_queue, MODEL, args.sim_time, args.rps): row
                 for row in jobs
             }
             for future in concurrent.futures.as_completed(future_to_row):
@@ -617,31 +709,49 @@ def run_use_case(use_case: str, args: argparse.Namespace) -> int:
                     print(f"  FAILED {name}: {exc}", file=sys.stderr)
                     failures.append(name)
                     continue
-                result["UseCase"] = usecase_label
                 pd.DataFrame([result], columns=RESULT_COLUMNS).to_csv(
                     results_path, mode="a", header=False, index=False
                 )
-                ttft99 = result["TTFT_p99"]
+                # Cost isn't part of the author's schema (it's derived
+                # downstream by the plotting code); `row["Cost"]` is still
+                # available here from deployment_space's own enumeration,
+                # so console diagnostics can use it without storing it.
+                cost = row["Cost"]
+                tokens_per_dollar = result["output_throughput"] / cost if cost else float("nan")
+                ttft99 = _ttft_p99(result["Ongoing_TTFT_latencies"], result["TTFT_latencies"])
                 print(
                     f"  done {result['Serving Name']}: "
                     f"TTFT_p99={ttft99:.1f}ms tokens/s={result['output_throughput']:.1f} "
-                    f"tokens/s/$={result['tokens_per_dollar']:.2f}",
+                    f"tokens/s/$={tokens_per_dollar:.2f}",
                     file=sys.stderr,
                 )
 
     results_df = pd.read_csv(results_path)
-    results_df = results_df[results_df["UseCase"] == usecase_label]
     slo_ms = cfg["ttft_slo_ms"]
-    valid = results_df[results_df["TTFT_p99"] <= slo_ms]
+    ttft99_col = [
+        _ttft_p99(o, t) for o, t in zip(results_df["Ongoing_TTFT_latencies"], results_df["TTFT_latencies"])
+    ]
+    results_df["_TTFT_p99"] = ttft99_col
+    valid = results_df[results_df["_TTFT_p99"] <= slo_ms]
     print(f"\n[{use_case}] {len(results_df)} configs simulated, {len(valid)} meet TTFT P99 <= {slo_ms} ms SLO")
     if len(valid):
-        top5 = valid.sort_values("tokens_per_dollar", ascending=False).head(5)
+        # Join back to this run's search-space enumeration (`run_df`) for
+        # Cost -- see the comment above; not stored in the results CSV.
+        keyed = run_df.copy()
+        keyed["_UseCase"] = keyed.apply(lambda r: build_usecase(r, args.rps), axis=1)
+        keyed["_ServingName"] = keyed.apply(build_serving_name, axis=1)
+        merged = valid.merge(
+            keyed[["_UseCase", "_ServingName", "Hardware", "Batching_Strategy", "Cost"]],
+            left_on=["UseCase", "Serving Name"], right_on=["_UseCase", "_ServingName"], how="left",
+        )
+        merged["_tokens_per_dollar"] = merged["output_throughput"] / merged["Cost"]
+        top5 = merged.sort_values("_tokens_per_dollar", ascending=False).head(5)
         print(f"[{use_case}] top-5 by tokens/s/$:")
         with pd.option_context("display.max_colwidth", 60, "display.width", 160):
             print(
                 top5[[
-                    "Hardware", "Parallelism", "Batching_Strategy",
-                    "TTFT_p99", "output_throughput", "Cost", "tokens_per_dollar",
+                    "Hardware", "Batching_Strategy",
+                    "_TTFT_p99", "output_throughput", "Cost", "_tokens_per_dollar",
                 ]].to_string(index=False)
             )
 

@@ -1,13 +1,18 @@
 """Per-accelerator hourly rental prices and vendor grouping for T3 (Fig. 7, Fig. 8).
 
-Declarative data only: ``run_T3.py`` reads ``PRICE_PER_HOUR`` to cost every
-deployment_space row, and ``plot_T3.py`` reads ``VENDOR_COLORS`` /
-``VENDOR_MARKERS`` / ``VENDOR_CATEGORY_ORDER`` / ``VENDOR_LEGEND_ORDER`` /
-``PERFORMANCE_SCALE_FACTOR`` for the Fig. 7/8 plots and the README's
-hardware table, so there is exactly one place that encodes vendor, price,
-and scale-factor per SKU. Ported from ``GenA_Paper_charts/SC26/
-plot_sc_results.py``'s ``DEFAULT_PRICES`` / ``PERFORMANCE_SCALE_FACTOR``,
-restricted to the paper's Sec. 5.1 8-SKU hardware table.
+Declarative data, plus the two hardware/vendor helpers `run_T3.py` needs at
+*sweep* time (before any simulation runs, working on `deployment_space`'s
+own clean ``Hardware`` column). `plot_T3.py` needs a related but distinct
+set of helpers -- it regex-parses the *simulated* results' concatenated
+"UseCase"/"Serving Name" strings, faithfully porting
+``plot_sc_results.py``'s own `parse_hardware`/`get_vendor`/etc. directly
+into itself rather than importing them from here -- but reads its
+prices/vendor-grouping/colors from this module, so there is exactly one
+place that encodes vendor, price, and scale-factor per SKU. Ported from
+``GenA_Paper_charts/SC26/plot_sc_results.py``'s ``DEFAULT_PRICES`` /
+``PERFORMANCE_SCALE_FACTOR`` / ``IGNORE_HW``, restricted to the paper's
+Sec. 5.1 8-SKU hardware table; every value reconciled against (and
+matching) ``DEFAULT_PRICES`` as of this writing.
 
 ``DEFAULT_PRICES`` conflicts with ``experiment_runner.py``'s own internal
 search-space price table; this module uses ``DEFAULT_PRICES`` (matches the
@@ -47,6 +52,13 @@ PERFORMANCE_SCALE_FACTOR: Dict[str, float] = {
 
 # The 8 SKUs the T3 search space is built from, in a fixed, deterministic order.
 SKUS: List[str] = list(PRICE_PER_HOUR)
+
+# Hardware handles plot_T3.py's load_and_process drops before any vendor/
+# cost computation, ported verbatim from plot_sc_results.py's `IGNORE_HW`.
+# "cerebras_cs3" appears in the author's real chat_results.csv (their
+# search space was broader than the 8-SKU table above) but isn't one of
+# the 8 SKUs this repo's own run_T3.py sweeps or prices.
+IGNORE_HW: List[str] = ["cerebras_cs3"]
 
 # Which vendor manufactures each SKU. "Mixed" is not a SKU -- a disaggregated
 # (prefill, decode) pair is "Mixed" when its two SKUs resolve to different
@@ -103,11 +115,16 @@ SKU_DISPLAY_NAMES: Dict[str, str] = {
 
 
 def parse_hardware(hardware: str, is_disaggregated: bool):
-    """(prefill_sku, decode_sku, is_hetero) for one `Hardware` value.
+    """(prefill_sku, decode_sku, is_hetero) for one `deployment_space`
+    search-space row's clean `Hardware` value (a single SKU, or
+    "<prefill>-<decode>" for disaggregated configs).
 
-    Port of plot_sc_results.py's `parse_hardware`, adapted to read our own
-    clean `Hardware` column (a single SKU, or "<prefill>-<decode>" for
-    disaggregated configs) instead of regex-parsing a "UseCase" string.
+    Used only by `run_T3.py` (`select_fast_eval_subset`'s vendor
+    stratification), at sweep time, before any simulation. Not the same
+    function as `plot_sc_results.py`'s own `parse_hardware`, which
+    regex-parses a simulated result row's concatenated "UseCase" string --
+    `plot_T3.py` ports that one directly into itself instead of importing
+    it from here; see this module's docstring.
     """
     if is_disaggregated:
         prefill_sku, decode_sku = hardware.split("-", 1)
@@ -116,22 +133,11 @@ def parse_hardware(hardware: str, is_disaggregated: bool):
     return prefill_sku, decode_sku, prefill_sku != decode_sku
 
 
-def is_multi_vendor_config(hardware: str, is_disaggregated: bool) -> bool:
-    """True iff the prefill and decode SKUs resolve to different vendors.
-
-    Narrower than `vendor_of_config`'s "Mixed"; used for Fig. 8's bar
-    chart, where `vendor_of_config` is used for Fig. 7's scatter. See
-    docs/FINDINGS.md#t3 ("Fig. 7 vs. Fig. 8 'Mixed' category inconsistency").
-    """
-    prefill_sku, decode_sku, _ = parse_hardware(hardware, is_disaggregated)
-    return VENDOR_OF_SKU[prefill_sku] != VENDOR_OF_SKU[decode_sku]
-
-
 def vendor_of_config(hardware: str, is_disaggregated: bool) -> str:
     """Vendor/category group for one `deployment_space.get_search_space` row:
-    'Mixed' unless prefill_sku == decode_sku exactly (broader than
-    `is_multi_vendor_config`, which requires different *vendors* -- see
-    docs/FINDINGS.md#t3). Returns one of `VENDOR_CATEGORY_ORDER`.
+    'Mixed' unless prefill_sku == decode_sku exactly. Used only by
+    `run_T3.py`'s `select_fast_eval_subset`, at sweep time; see
+    `parse_hardware` above. Returns one of `VENDOR_CATEGORY_ORDER`.
     """
     prefill_sku, decode_sku, is_hetero = parse_hardware(hardware, is_disaggregated)
     if is_hetero:
