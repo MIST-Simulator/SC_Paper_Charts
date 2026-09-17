@@ -457,12 +457,16 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
 
     coordinator.run_sim()
 
-    # `.GenA_engines`: an instance attribute baked into the simulator's own
-    # Coordinator class (not covered by the mist/GenA import-alias rename);
-    # update here if/when the simulator renames it upstream.
+    # The coordinator's engine list: `engines` in the released simulator,
+    # `GenA_engines` in a pre-release checkout. An import alias cannot cover
+    # an instance attribute, so accept either.
+    engines = getattr(coordinator, "engines", None)
+    if engines is None:
+        engines = coordinator.GenA_engines
+
     ongoing_ttft = [
         req.data[0].finished_time - req.metrics.arrival_time
-        for engine in coordinator.GenA_engines
+        for engine in engines
         for req in engine.scheduler.running
         if len(req.data) > 0
     ]
@@ -477,7 +481,7 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float) -
     else:
         percentiles = {f"TTFT_p{p}": np.nan for p in (50, 90, 95, 99)}
 
-    energy_used = sum(engine.energy_consumed for engine in coordinator.GenA_engines)
+    energy_used = sum(engine.energy_consumed for engine in engines)
     cost_per_hour = row["Cost"]
     tokens_per_dollar = stats.output_throughput / cost_per_hour if cost_per_hour else np.nan
 
