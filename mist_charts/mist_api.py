@@ -16,10 +16,18 @@ analytical hardware/model-config library and keeps its own name.
 """
 
 import importlib
+import os
 import sys as _sys
 
-# Published name first, pre-release name second.
-_PACKAGE_CANDIDATES = ("mist", "GenA")
+# Published name first, pre-release name second. Override with
+# MIST_PACKAGE_NAME=GenA to pin a specific checkout -- useful when both are
+# installed in one environment and you need results comparable to a run made
+# against the other one.
+_PACKAGE_CANDIDATES = (
+    (os.environ["MIST_PACKAGE_NAME"],)
+    if os.environ.get("MIST_PACKAGE_NAME")
+    else ("mist", "GenA")
+)
 
 _SUBMODULES = (
     "",
@@ -82,11 +90,18 @@ try:
         TraceIngestion,
         vLLMPlatformConfig,
     )
-    from mist.Coordinator import (  # noqa: F401
-        CoordRouterType,
-        GenACoordinator as MISTCoordinator,
-        GenACoordinatorDisagg as MISTCoordinatorDisagg,
-    )
+    from mist.Coordinator import CoordRouterType  # noqa: F401
+
+    # The coordinators are exported as MIST* by the published package and as
+    # GenA* by a pre-release checkout; accept either so the scripts work
+    # against both.
+    _coord = importlib.import_module("mist.Coordinator")
+    try:
+        MISTCoordinator = _coord.MISTCoordinator
+        MISTCoordinatorDisagg = _coord.MISTCoordinatorDisagg
+    except AttributeError:
+        MISTCoordinator = _coord.GenACoordinator
+        MISTCoordinatorDisagg = _coord.GenACoordinatorDisagg
     from mist.Engine import (  # noqa: F401
         EngineType,
         KVRetrievalEngine,
