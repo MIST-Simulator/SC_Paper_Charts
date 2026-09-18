@@ -225,20 +225,6 @@ configs from 83 (as in "chat", which never attaches KV_Tokens and so
 never hits this) to 45. The true codegen Mixed-vendor advantage is likely
 larger than what the surviving 45 configs measure.
 
-### Results: the Mixed-vendor advantage does not reproduce as published
-
-| Use case | Measured (this repro) | Paper |
-|---|---|---|
-| chat | Mixed 11.1% **worse** than best single vendor (TPU), 7.8% more expensive | +22.0% / -17.4% |
-| codegen | Mixed 11.0% better, 41.8% cheaper than TPU | +49.3% / -34.4% |
-
-Chat had full coverage (150/150 configs simulated, 97 meeting SLO), so
-its negative result is not a sampling artifact. Codegen is a weaker claim
-given the `chunked_moddeling` failures above, which cut its Mixed sample
-disproportionately. The runtime-backend substitution (AIConfigurator vs.
-MIST's own event-driven simulation, see above) is the other candidate
-explanation for the gap from the paper's numbers.
-
 ### Hardware list and run-config discrepancies
 
 The version of `experiment_runner.py` that shipped with commit `aac3254`
