@@ -258,14 +258,23 @@ def load_and_process(use_case: str, prices: Optional[Dict[str, float]] = None) -
     df["prefill_nodes"] = serving_info.apply(lambda x: x[1])
     df["decode_nodes"] = serving_info.apply(lambda x: x[2])
 
-    # Compute cost
-    df["cost_per_hour"] = df.apply(
+    # Compute cost. `Serving Name` carries only the DP replica count, so
+    # compute_cost bills a TP2xDP4 deployment for 4 accelerators rather
+    # than 8 -- halving the cost of every TP>1 configuration. run_T3.py
+    # writes the true accelerator count (TP*PP*DP) to `Cost`, so prefer
+    # that and fall back to the derived value only for result files that
+    # predate the column.
+    derived_cost = df.apply(
         lambda row: compute_cost(
             row["prefill_hw"], row["decode_hw"],
             row["total_nodes"], row["prefill_nodes"], row["decode_nodes"],
             row["is_disaggregated"], prices,
         ), axis=1,
     )
+    if "Cost" in df.columns:
+        df["cost_per_hour"] = df["Cost"].fillna(derived_cost)
+    else:
+        df["cost_per_hour"] = derived_cost
 
     # TTFT percentiles from flattened Ongoing_TTFT_latencies + TTFT_latencies
     ttft_pcts = df.apply(

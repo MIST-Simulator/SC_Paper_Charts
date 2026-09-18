@@ -191,6 +191,10 @@ RESULT_COLUMNS = [
     "interactivity", "output_throughput", "total_token_throughput",
     "Input Lens", "Output Lens", "Running Input Lens", "Running Output Lens",
     "Ongoing_TTFT_latencies", "TTFT_latencies", "latencies",
+    # Beyond the source schema: `Serving Name` records only the DP replica
+    # count, so cost derived from it undercounts every TP>1 deployment.
+    # This carries the true accelerator count's cost (TP*PP*DP).
+    "Cost",
 ]
 
 
@@ -438,6 +442,7 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float, r
     `load_and_process` derive the same numbers the author's plotting code
     would from a real experiment_runner.py CSV.
     """
+    cost_per_hour = row["Cost"]
     req_queue = deepcopy(base_req_queue)
     is_disagg = row["Batching_Strategy"] == BatchingMethod.DISAGGREGATED
 
@@ -572,6 +577,7 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float, r
         "Ongoing_TTFT_latencies": ongoing_ttft_latencies,
         "TTFT_latencies": ttft_latencies,
         "latencies": latencies,
+        "Cost": cost_per_hour,
     }
 
 
