@@ -113,7 +113,7 @@ for Fig. 6(a), two independent upstream issues turned up. Neither affects
 the numbers above (which use `vLLMPlatformConfig`, per the paper's own
 description of Fig. 6(a)'s methodology), but both are real:
 
-1. **`PlatformConfig` hardcodes `bits='fp8'`.** `mist/Platforms/platforms.py`
+1. **`PlatformConfig` hardcodes `bits='fp8'`** *(fixed in MIST: `ClusterConfig` now takes `bits=`, default `'bf16'`)*. `mist/Platforms/platforms.py`
    passes `bits='fp8'` into every `chunked_moddeling`/`System(...)` call
    (lines 78, 276, 323, 361, 379), and `PlatformConfig.__init__` exposes
    no dtype parameter to override it. Manually forcing `bf16` on one

@@ -6,7 +6,7 @@ Heterogeneous, Multi-Stage LLM Inference_** (SC 2026).
 MIST is an event-driven simulator that models the full LLM serving stack —
 workload, system/software, and hardware layers — for heterogeneous,
 multi-stage inference pipelines. The simulator is open source at
-[MIST-Simulator/MIST](https://github.com/MIST-Simulator/MIST); this
+[astra-sim/MIST](https://github.com/astra-sim/MIST); this
 repository holds only the scripts that drive it to regenerate the paper's
 figures.
 
@@ -86,7 +86,8 @@ simulators:
 | LLMServingSim 2.0 | LLMServingSim 2.0 | separate simulator, separate environment |
 | `fio` block-device latencies | NVMe SSD, DDR4 | requires the physical devices |
 
-Each vendored file is documented in `data/validation/README.md` with its
+Each vendored file is documented in `data/validation/T1/README.md` and
+`data/validation/T2/README.md` with its
 provenance and the command that produced it.
 
 ### Reference results
@@ -195,7 +196,7 @@ figures/               generated PDFs
 **`ImportError: Could not import the MIST simulator`** — the `MIST` package
 is not installed in the active environment. Run `./setup.sh` and
 `conda activate mist-sc26`, or install it directly with
-`pip install git+https://github.com/MIST-Simulator/MIST.git`.
+`pip install git+https://github.com/astra-sim/MIST.git`.
 
 **`FileNotFoundError` naming a generated and a reference path** — neither
 the sweep nor the reference results are available for that task. Run the

@@ -15,12 +15,12 @@ per-step batch composition — each row is one scheduler step).
 
 | File | Source | Notes |
 |------|--------|-------|
-| `vllm_step_runtime_H100_TP4.csv` | Real vLLM 0.x serving engine, physical 4x H100 SXM node | Copied verbatim from `mist/Platforms/vllm_runtime_data/Llama-2-70b-hf_NVIDIA_H100_4.csv`. Semicolon-delimited: `Prefill` (list of `(past_kv, chunk_tokens)` tuples), `Context` (list of decode KV lengths), `Decode` (unused), `Time (ms)` measured wall-clock step latency. |
-| `vllm_step_runtime_H100_TP8.csv` | Real vLLM engine, physical 8x H100 SXM node | Copied from `mist/Platforms/vllm_runtime_data/Llama-2-70b-hf_NVIDIA_H100_8.csv`. Same schema. |
-| `vidur_step_runtime_H100_TP4.csv` | [Vidur](https://github.com/microsoft/vidur) simulator, same model/hardware/trace config, TP4 | Copied from `mist/Platforms/vllm_runtime_data/vidur_Llama-2-70b-hf_NVIDIA_H100_4_sharegpt.csv`. Separate simulator, separate environment — Vidur is not installed in this repo. Schema: `Prefill`, `Context`, `Time (ms)` (Vidur's own predicted step latency). |
-| `vidur_step_runtime_H100_TP8.csv` | Vidur simulator, TP8 | Copied from `mist/Platforms/vllm_runtime_data/vidur_Llama-2-70b-hf_NVIDIA_H100_8_sharegpt.csv`. |
+| `vllm_step_runtime_H100_TP4.csv` | Real vLLM 0.x serving engine, physical 4x H100 SXM node | Copied verbatim from `mist/Clusters/vllm_runtime_data/Llama-2-70b-hf_NVIDIA_H100_4.csv`. Semicolon-delimited: `Prefill` (list of `(past_kv, chunk_tokens)` tuples), `Context` (list of decode KV lengths), `Decode` (unused), `Time (ms)` measured wall-clock step latency. |
+| `vllm_step_runtime_H100_TP8.csv` | Real vLLM engine, physical 8x H100 SXM node | Copied from `mist/Clusters/vllm_runtime_data/Llama-2-70b-hf_NVIDIA_H100_8.csv`. Same schema. |
+| `vidur_step_runtime_H100_TP4.csv` | [Vidur](https://github.com/microsoft/vidur) simulator, same model/hardware/trace config, TP4 | Copied from `mist/Clusters/vllm_runtime_data/vidur_Llama-2-70b-hf_NVIDIA_H100_4_sharegpt.csv`. Separate simulator, separate environment — Vidur is not installed in this repo. Schema: `Prefill`, `Context`, `Time (ms)` (Vidur's own predicted step latency). |
+| `vidur_step_runtime_H100_TP8.csv` | Vidur simulator, TP8 | Copied from `mist/Clusters/vllm_runtime_data/vidur_Llama-2-70b-hf_NVIDIA_H100_8_sharegpt.csv`. |
 
-**Located at**: `<mist-checkout>/mist/Platforms/vllm_runtime_data/`
+**Located at**: `<mist-checkout>/mist/Clusters/vllm_runtime_data/`
 (the `MIST` simulator checkout,
 *not* this `SC_Paper_Charts` repo — the notebook that originally produced
 Figure 6a, `GenA_Paper_charts/Validation/3.ISCA26/individual_step_validation.ipynb`,
@@ -43,21 +43,21 @@ GenZ analytical roofline.** The paper's §4.1.1 ("LLM Client HW Executor")
 defines MIST's per-step runtime model as an ensemble of regressors trained
 on profiled vLLM data, and §4.2's validation subsection is explicitly scoped
 to "our ML-Based LLM Cluster Modeling (§4.1.1)". `run_T2.py` therefore uses
-`mist.Platforms.vllm_platform.vLLMPlatformConfig` (lookup + RandomForest
+`mist.Clusters.vllm_cluster.vLLMClusterConfig` (lookup + RandomForest
 ensemble over profiled vLLM data) pointed at the two `vllm_step_runtime_*.csv`
-files above as "MIST", not `mist.Platforms.platforms.PlatformConfig` (the
+files above as "MIST", not `mist.Clusters.clusters.ClusterConfig` (the
 GenZ analytical path — see "Known upstream issues" below for why that path
 gives a very different, much worse number, and why that's expected and not
 a bug in this reproduction).
 
-Because vLLMPlatformConfig's near-exact lookup and its RandomForestRegressor
+Because vLLMClusterConfig's near-exact lookup and its RandomForestRegressor
 are fit directly on the profiled CSV, evaluating them on rows drawn from
 that same CSV is tautological unless those exact rows are excluded from
 training first. `run_T2.py` therefore does a seeded, deterministic **held-out
 group split**: for each (hardware, stage), it groups rows by exact
-`(total_batches, total_tokens)` — the same key vLLMPlatformConfig's own
+`(total_batches, total_tokens)` — the same key vLLMClusterConfig's own
 lookup matches on — and holds out a whole `--holdout-frac` (default 0.2) of
-those groups. `vLLMPlatformConfig` is instantiated on a temp CSV containing
+those groups. `vLLMClusterConfig` is instantiated on a temp CSV containing
 only the non-held-out rows, so the near-exact lookup can never find a
 held-out row's configuration and every held-out row is scored purely by the
 (also held-out) regressor.
@@ -76,18 +76,18 @@ series are compared on an apples-to-apples, no-leakage basis.
 ## Known upstream issues (informational — not the mechanism used above)
 
 While investigating a first (incorrect) draft of this reproduction that used
-`PlatformConfig.get_chunked_time()` (the GenZ analytical roofline) as "MIST"
+`PlatformConfig.get_chunked_time()` (now `ClusterConfig`) (the GenZ analytical roofline) as "MIST"
 for Figure 6(a), two independent upstream issues were found — neither
-affects the numbers above (which use `vLLMPlatformConfig`, per the paper's
+affects the numbers above (which use `vLLMClusterConfig`, per the paper's
 own description of Fig. 6(a)'s methodology). Full writeup, including the
 ~2-3x underprediction measurement and the exact crash, in
 [`docs/FINDINGS.md`](../../../docs/FINDINGS.md#t2):
 
-1. `PlatformConfig` hardcodes `bits='fp8'` in five places in
-   `mist/Platforms/platforms.py`, with no dtype override exposed — this is
-   the path the paper uses for hypothetical, unprofiled hardware (§5.1),
-   never the basis for Fig. 6(a).
-2. `PlatformConfig(device="h100_sxm", ...)` crashes in this environment's
+1. `PlatformConfig` (now `ClusterConfig`) hardcoded `bits='fp8'`. Fixed in
+   MIST: `ClusterConfig` takes `bits=` (default `'bf16'`), and T3/T4 pass it
+   explicitly. This is the path the paper uses for hypothetical, unprofiled
+   hardware (§5.1), never the basis for Fig. 6(a).
+2. `PlatformConfig(device="h100_sxm", ...)` (now `ClusterConfig`) crashes in this environment's
    GenZ checkout with an `AttributeError` on `GEMMQuantMode.bfloat16` (same
    upstream rename as T1's `_patch_genz_quant_compat`).
 
@@ -112,7 +112,7 @@ Reproducing them requires the original physical DDR4/NVMe hardware.
 
 The MIST curve for this panel is *not* vendored: `run_T2.py` computes it by
 calling MIST's own KV-retrieval cost model
-(`mist.Platforms.memory_platform.SingleCacheConfig.get_retrieval_time`, via
+(`mist.Clusters.memory_cluster.SingleCacheConfig.get_retrieval_time`, via
 `MemoryCacheConfig.get_KV_cache_time`) with representative DDR4/NVMe device
 parameters (typical CAS-latency-scale lookup latency and sequential
 bandwidth), for a synthetic Llama-3-70B (`meta-llama/llama-3.1-70b`, the

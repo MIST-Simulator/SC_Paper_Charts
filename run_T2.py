@@ -4,22 +4,22 @@ validation.
 
   (a) Per-step forward-pass runtime: MIST vs Vidur vs real vLLM, for
       Llama-2-70B on H100 at tensor-parallel degree 4 and 8. MIST here is
-      ``vLLMPlatformConfig`` (lookup + RandomForest ensemble over profiled
+      ``vLLMClusterConfig`` (lookup + RandomForest ensemble over profiled
       vLLM data), the ML-based model the paper's Sec. 4.1.1/4.2 validates --
-      not the GenZ analytical ``PlatformConfig`` path. Each hardware/stage
+      not the GenZ analytical ``ClusterConfig`` path. Each hardware/stage
       is scored on a seeded held-out split of (total_batches, total_tokens)
       groups so evaluation never falls back to an exact-match lookup on
       training data; Vidur gets the same protocol on its own baseline CSV
       for an apples-to-apples comparison. See docs/FINDINGS.md#t2 for the
       full methodology and the two known upstream GenZ issues this
-      sidesteps (fp8-hardcoded PlatformConfig, GEMMQuantMode.bfloat16).
+      sidesteps (fp8-hardcoded ClusterConfig, GEMMQuantMode.bfloat16).
 
   (b) KV cache retrieval latency: MIST vs `fio`-measured latency, for NVMe
       SSD and DDR4, sequential reads, block sizes 256 KB - 1 GB, using a
       Llama-3-70B (meta-llama/llama-3.1-70b GenZ config, 160 KB/token) KV
       cache as the example. The MIST curve is produced by driving MIST's own
-      KV-retrieval cost model (mist.Platforms.memory_platform.SingleCacheConfig
-      / MemoryCacheConfig, as used by mist.Engine.KV_Retrieval_Engine) with
+      KV-retrieval cost model (mist.Clusters.memory_cluster.SingleCacheConfig
+      / MemoryCacheConfig, as used by mist.Client.KV_Retrieval_Client) with
       representative DDR4/NVMe device parameters -- never a formula
       re-implemented in the plotting script.
 
@@ -45,7 +45,7 @@ from mist_charts.mist_api import (
     RequestStage,
     SingleCacheConfig,
     get_configs,
-    vLLMPlatformConfig,
+    vLLMClusterConfig,
 )
 
 T2_DATA_DIR = VALIDATION_DIR / "T2"
@@ -68,7 +68,7 @@ STAGES = ("prefill", "decode", "chunked")
 FEATURE_COLUMNS = ["total_batches", "total_tokens", "total_KV_length", "total_attention_size"]
 
 # Original vLLM/Vidur trace CSV columns, in order, for round-tripping the
-# train-only subset back out to a temp CSV that vLLMPlatformConfig can load.
+# train-only subset back out to a temp CSV that vLLMClusterConfig can load.
 _RAW_COLUMNS = ["Prefill", "Context", "Decode", "Time (ms)"]
 
 
@@ -146,7 +146,7 @@ def _split_stages(df):
 def _held_out_groups(stage_df, holdout_frac, seed):
     """Pick a seeded, deterministic subset of whole (total_batches,
     total_tokens) groups to hold out entirely -- not individual rows, since
-    vLLMPlatformConfig's near-exact lookup matches on that same key (see
+    vLLMClusterConfig's near-exact lookup matches on that same key (see
     docs/FINDINGS.md#t2).
     """
     groups = sorted(set(zip(stage_df["total_batches"], stage_df["total_tokens"])))
@@ -227,7 +227,7 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
             vidur_train_df, _ = _split_by_groups(vidur_stage_df, holdout_groups)
             vidur_train_dfs[stage] = vidur_train_df
 
-        # Fit vLLMPlatformConfig only on non-held-out rows, written to a
+        # Fit vLLMClusterConfig only on non-held-out rows, written to a
         # scratch CSV in the original trace format.
         train_full_df = pd.concat(train_parts, ignore_index=True) if train_parts else pd.DataFrame(columns=_RAW_COLUMNS)
         with tempfile.NamedTemporaryFile(
@@ -237,7 +237,7 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
             train_csv_path = tmp_f.name
 
         try:
-            platform = vLLMPlatformConfig(
+            platform = vLLMClusterConfig(
                 vllm_df_path=train_csv_path, device="H100", tensor_parallel_size=tp_size, model=MODEL_NAME
             )
 
@@ -302,7 +302,7 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
 KV_MODEL_NAME = "meta-llama/llama-3.1-70b"
 
 # Representative device parameters used to *parameterize* MIST's existing
-# retrieval-latency model (mist.Platforms.memory_platform.SingleCacheConfig);
+# retrieval-latency model (mist.Clusters.memory_cluster.SingleCacheConfig);
 # these are not measurements -- the measured comparison lives in
 # data/validation/T2/fio_retrieval_latency.csv. Values match the assumptions
 # used in the original prototype (combined_retreival_latency_plot.py):
@@ -374,7 +374,7 @@ def main() -> int:
         type=float,
         default=0.2,
         help="Fraction of (total_batches, total_tokens) groups per (hardware, stage) "
-        "to hold out entirely from vLLMPlatformConfig's / Vidur's training data "
+        "to hold out entirely from vLLMClusterConfig's / Vidur's training data "
         "before evaluating part (a) on them (seeded, deterministic).",
     )
     parser.add_argument(
