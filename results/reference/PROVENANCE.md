@@ -2,14 +2,19 @@
 
 Each `results/reference/<task>/` directory is the unmodified output of the
 `run_<task>.py` command below. Re-running the same command with the same
-versions reproduces every column exactly, except `sim_wall_clock_sec`
-(wall-clock time of the run).
+versions and an empty MIST latency cache reproduces every column exactly,
+except `sim_wall_clock_sec` (wall-clock time of the run).
+
+MIST reuses step latencies cached on disk (`~/.cache/mist`, or
+`$MIST_CACHE_DIR`), and the cache key does not include T2's training data or
+hold-out seed. To reproduce, point each run at a new, empty directory:
+`MIST_CACHE_DIR=$(mktemp -d) python run_T2.py`.
 
 ## T1, T2: regenerated 2026-11-17
 
 | | |
 | --- | --- |
-| Commands | `python run_T1.py`, `python run_T2.py` (default arguments, seed 259) |
+| Commands | `python run_T1.py`, `python run_T2.py` (default arguments, seed 259), each with its own empty `MIST_CACHE_DIR` |
 | MIST | astra-sim/MIST `c00cc59` (`main`). PR #2 (ASTRA-sim backend) gives identical output. |
 | GenZ | abhibambhaniya/GenZ-LLM-Analyzer `bc2df48`, aiconfigurator `d5fb9da2`, via `scripts/install_genz.sh` |
 | Python | 3.12.12; numpy 1.26.4, pandas 3.0.6, scikit-learn 1.9.1, scipy 1.17.1 |
