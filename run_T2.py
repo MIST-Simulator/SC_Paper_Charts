@@ -18,8 +18,8 @@ validation.
       SSD and DDR4, sequential reads, block sizes 256 KB - 1 GB, using a
       Llama-3-70B (meta-llama/llama-3.1-70b GenZ config, 160 KB/token) KV
       cache as the example. The MIST curve is produced by driving MIST's own
-      KV-retrieval cost model (mist.Platforms.memory_platform.SingleCacheConfig
-      / MemoryCacheConfig, as used by mist.Engine.KV_Retrieval_Engine) with
+      KV-retrieval cost model (mist.Clusters.memory_cluster.SingleCacheConfig
+      / MemoryCacheConfig, as used by mist.Client.KV_Retrieval_Client) with
       representative DDR4/NVMe device parameters -- never a formula
       re-implemented in the plotting script.
 
@@ -302,7 +302,7 @@ def run_part_a(seed: int, holdout_frac: float, max_samples_per_stage: int) -> pd
 KV_MODEL_NAME = "meta-llama/llama-3.1-70b"
 
 # Representative device parameters used to *parameterize* MIST's existing
-# retrieval-latency model (mist.Platforms.memory_platform.SingleCacheConfig);
+# retrieval-latency model (mist.Clusters.memory_cluster.SingleCacheConfig);
 # these are not measurements -- the measured comparison lives in
 # data/validation/T2/fio_retrieval_latency.csv. Values match the assumptions
 # used in the original prototype (combined_retreival_latency_plot.py):
