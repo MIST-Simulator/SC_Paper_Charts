@@ -32,12 +32,12 @@ import pandas as pd
 from mist_charts.memory_configs import CASE_ORDER, STORAGE_ARCHITECTURES, sharing_group_size
 from mist_charts.mist_api import (
     BatchingMethod,
-    EngineType,
+    ClientType,
     MISTCoordinator,
-    KVRetrievalEngine,
-    LLMEngine,
+    KVRetrievalClient,
+    LLMClient,
     MemoryCacheConfig,
-    PlatformConfig,
+    ClusterConfig,
     Request,
     RequestStage,
     SchedulerConfig,
@@ -175,7 +175,7 @@ def build_base_stream(
 def realize_requests(stream: List[Dict], context_len: int, arch, num_clients: int, num_llm_engines: int):
     """Turn the shared base stream into MIST ``Request`` objects for one
     storage architecture: apply the short/long KV-context past_context (or,
-    for Case E, inline recompute), and set engine_preference from the
+    for Case E, inline recompute), and set client_preference from the
     architecture's client-sharing group.
     """
     group_size = sharing_group_size(arch, num_clients)
@@ -196,7 +196,7 @@ def realize_requests(stream: List[Dict], context_len: int, arch, num_clients: in
                 beam_size=1,
                 stages=[RequestStage.PREFILL, RequestStage.DECODE],
             )
-            req.engine_preference = group_engines
+            req.client_preference = group_engines
         else:
             req = Request(
                 request_id=item["request_id"],
@@ -207,7 +207,7 @@ def realize_requests(stream: List[Dict], context_len: int, arch, num_clients: in
                 stages=[RequestStage.CACHE_RETRIEVAL, RequestStage.PREFILL, RequestStage.DECODE],
                 past_context=context_len,
             )
-            req.engine_preference = [num_llm_engines] + group_engines
+            req.client_preference = [num_llm_engines] + group_engines
 
         requests.append(req)
     return requests
@@ -229,7 +229,7 @@ def run_one_config(
     namely Case D's DCN bandwidth, see ``--dcn-bandwidth-gbps``.
     """
     num_llm_engines = num_clients
-    num_total_engines = num_llm_engines + 1  # +1 for the shared KVRetrievalEngine
+    num_total_engines = num_llm_engines + 1  # +1 for the shared KVRetrievalClient
 
     requests = realize_requests(stream, context_len, arch, num_clients, num_llm_engines)
 
@@ -252,10 +252,10 @@ def run_one_config(
         network_file=connection_df,
     )
 
-    # One shared PlatformConfig object for all client engines, matching the
+    # One shared ClusterConfig object for all client engines, matching the
     # notebook's run_simulation (perf: avoids re-deriving the GenZ system
     # model 128 times over).
-    platform = PlatformConfig(
+    platform = ClusterConfig(
         device=DEVICE, tensor_parallel_size=TP_SIZE, pipeline_parallel_size=1,
         model=MODEL, bits=BITS,
     )
@@ -267,14 +267,14 @@ def run_one_config(
         max_total_tokens_per_sample=513_000,
     )
     for _ in range(num_llm_engines):
-        coordinator.add_engine(
-            LLMEngine(
+        coordinator.add_client(
+            LLMClient(
                 model=MODEL,
-                engine_types=[EngineType.PREFILL, EngineType.DECODE],
+                client_types=[ClientType.PREFILL, ClientType.DECODE],
                 scheduler_config=SchedulerConfig(**scheduler_config_kwargs),
-                platform=platform,
+                cluster=platform,
             ),
-            [EngineType.PREFILL, EngineType.DECODE],
+            [ClientType.PREFILL, ClientType.DECODE],
         )
 
     if arch.recompute_kv:
@@ -293,9 +293,9 @@ def run_one_config(
         ]
     memory_cache = MemoryCacheConfig(cache_hierarchy)
     memory_cache.update_model(MODEL)
-    coordinator.add_engine(
-        KVRetrievalEngine(model=MODEL, platform=memory_cache),
-        [EngineType.CACHE_RETRIEVAL],
+    coordinator.add_client(
+        KVRetrievalClient(model=MODEL, cluster=memory_cache),
+        [ClientType.CACHE_RETRIEVAL],
     )
 
     coordinator.run_sim()
@@ -303,8 +303,8 @@ def run_one_config(
     records = []
     for req in coordinator.completed_requests:
         cache_metrics = req.stage_metrics.get("Cache Retrieval")
-        if cache_metrics is not None and cache_metrics.engine_exit_time is not None:
-            retrieval_latency = cache_metrics.engine_exit_time - cache_metrics.engine_entry_time
+        if cache_metrics is not None and cache_metrics.client_exit_time is not None:
+            retrieval_latency = cache_metrics.client_exit_time - cache_metrics.client_entry_time
         else:
             retrieval_latency = 0.0
         ttft = req.data[0].finished_time - req.metrics.arrival_time if req.data else None

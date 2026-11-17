@@ -77,14 +77,14 @@ _patch_genz_quant_compat()
 
 from mist_charts.mist_api import (  # noqa: E402  (after the compat shim above)
     BatchingMethod,
-    EngineType,
+    ClientType,
     MISTCoordinator,
-    LLMEngine,
+    LLMClient,
     PoissonDistribution,
     SchedulerConfig,
     TraceIngestion,
     mist_runtime_data_dir,
-    vLLMPlatformConfig,
+    vLLMClusterConfig,
 )
 
 MIST_RUNTIME_DIR = mist_runtime_data_dir()
@@ -94,7 +94,7 @@ _WORD_RE = re.compile(r"\S+")
 # Platform configs, ported from the notebook that produced the published
 # figure (GenA_Paper_charts/Validation/4.SC26/SimulatorComparision/
 # share_gpt_vllm_tpu_validation.ipynb, cells 6/19/27). chunk_size=2048 and
-# step_size=engine_kv_step_size=0 (always recompute exactly, never
+# step_size=client_kv_step_size=0 (always recompute exactly, never
 # approximate from a cached bucket) match that notebook.
 PLATFORMS = {
     "l40s": dict(
@@ -286,9 +286,9 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
     """Run one MIST simulation and return its per-request result frame.
 
     Passes fresh `decode_only_cache`/`mixed_batch_cache` dicts explicitly:
-    `LLMEngine.__init__` defaults these to mutable `{}`, which otherwise
+    `LLMClient.__init__` defaults these to mutable `{}`, which otherwise
     corrupts results across platforms sharing a process. See
-    docs/FINDINGS.md ("LLMEngine shares its per-step runtime cache").
+    docs/FINDINGS.md ("LLMClient shares its per-step runtime cache").
     """
     vllm_df_path = cfg["vllm_df_path"]
     if not Path(vllm_df_path).exists():
@@ -296,7 +296,7 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
             f"[{key}] vLLM runtime table not found at {vllm_df_path}."
         )
 
-    platform = vLLMPlatformConfig(
+    platform = vLLMClusterConfig(
         vllm_df_path=str(vllm_df_path),
         device=cfg["device"],
         tensor_parallel_size=cfg["tensor_parallel_size"],
@@ -305,7 +305,7 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
     )
     if not platform.use_vllm:
         raise RuntimeError(
-            f"[{key}] vLLMPlatformConfig fell back to the analytical model "
+            f"[{key}] vLLMClusterConfig fell back to the analytical model "
             f"instead of the vLLM runtime table at {vllm_df_path}; refusing "
             "to report results that don't reflect the real runtime table."
         )
@@ -313,20 +313,20 @@ def simulate_platform(key: str, cfg: dict, request_queue: list, verbose: bool) -
     coordinator = MISTCoordinator(
         deepcopy(request_queue), logging_file=None, max_sim_time=500_000_000
     )
-    coordinator.add_engine(
-        engine=LLMEngine(
+    coordinator.add_client(
+        client=LLMClient(
             model=cfg["model"],
-            engine_types=[EngineType.PREFILL, EngineType.DECODE],
+            client_types=[ClientType.PREFILL, ClientType.DECODE],
             scheduler_config=SchedulerConfig(
                 batching_method=BatchingMethod.CHUNKED, chunk_size=CHUNK_SIZE
             ),
-            platform=platform,
+            cluster=platform,
             step_size=0,
-            engine_kv_step_size=0,
+            client_kv_step_size=0,
             decode_only_cache={},
             mixed_batch_cache={},
         ),
-        engine_types=[EngineType.PREFILL, EngineType.DECODE],
+        client_types=[ClientType.PREFILL, ClientType.DECODE],
     )
 
     t0 = time.perf_counter()

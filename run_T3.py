@@ -134,11 +134,11 @@ _patch_runtime_db_backend_fallback()
 from mist_charts.deployment_space import get_search_space, estimate_memory_required_gb  # noqa: E402
 from mist_charts.mist_api import (  # noqa: E402
     BatchingMethod,
-    EngineType,
+    ClientType,
     MISTCoordinator,
     MISTCoordinatorDisagg,
-    LLMEngine,
-    PlatformConfig,
+    LLMClient,
+    ClusterConfig,
     PoissonDistribution,
     SchedulerConfig,
 )
@@ -449,11 +449,11 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float, r
     if is_disagg:
         prefill_hw, decode_hw = row["Hardware"].split("-")
         prefill_p, decode_p = _row_prefill_decode(row)
-        prefill_platform = PlatformConfig(
+        prefill_platform = ClusterConfig(
             device=prefill_hw, tensor_parallel_size=prefill_p["TP"],
             pipeline_parallel_size=prefill_p["PP"], model=model, bits=BITS,
         )
-        decode_platform = PlatformConfig(
+        decode_platform = ClusterConfig(
             device=decode_hw, tensor_parallel_size=decode_p["TP"],
             pipeline_parallel_size=decode_p["PP"], model=model, bits=BITS,
         )
@@ -461,20 +461,20 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float, r
         coordinator = MISTCoordinatorDisagg(
             request_queue_distr=req_queue,
             model=model,
-            num_llm_engines=num_clients,
-            num_prefill_engines=prefill_p["DP"],
-            num_decode_engines=decode_p["DP"],
-            num_mixed_engines=0,
-            platform=prefill_platform,
-            decode_platform=decode_platform,
-            convert_to_mixed_engine=False,
+            num_llm_clients=num_clients,
+            num_prefill_clients=prefill_p["DP"],
+            num_decode_clients=decode_p["DP"],
+            num_mixed_clients=0,
+            cluster=prefill_platform,
+            decode_cluster=decode_platform,
+            convert_to_mixed_client=False,
             logging_file=None,
             max_sim_time=max_sim_time,
             max_pending_prompt_tokens=320_000,
         )
     else:
         parallelism = row["Parallelism"]
-        platform = PlatformConfig(
+        platform = ClusterConfig(
             device=row["Hardware"], tensor_parallel_size=parallelism["TP"],
             pipeline_parallel_size=parallelism["PP"], model=model, bits=BITS,
         )
@@ -488,26 +488,22 @@ def run_one_config(row, base_req_queue: List, model: str, max_sim_time: float, r
             max_batch_size=row["Max_Batch_Size"],
         )
         for _ in range(num_clients):
-            coordinator.add_engine(
-                LLMEngine(
+            coordinator.add_client(
+                LLMClient(
                     model=model,
-                    engine_types=[EngineType.PREFILL, EngineType.DECODE],
+                    client_types=[ClientType.PREFILL, ClientType.DECODE],
                     scheduler_config=scheduler_config,
-                    platform=platform,
+                    cluster=platform,
                     decode_only_cache=decode_only_cache,
                     mixed_batch_cache=mixed_batch_cache,
                 ),
-                [EngineType.PREFILL, EngineType.DECODE],
+                [ClientType.PREFILL, ClientType.DECODE],
             )
 
     coordinator.run_sim()
 
-    # The coordinator's engine list: `engines` in the released simulator,
-    # `GenA_engines` in a pre-release checkout. An import alias cannot cover
-    # an instance attribute, so accept either.
-    engines = getattr(coordinator, "engines", None)
-    if engines is None:
-        engines = coordinator.GenA_engines
+    # The coordinator's clients (called engines in pre-release checkouts).
+    engines = coordinator.clients
 
     completed = coordinator.completed_requests
     stats = coordinator.global_stats

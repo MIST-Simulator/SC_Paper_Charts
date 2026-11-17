@@ -30,17 +30,17 @@ def check_simulation():
     """Run a 2-engine, 2-second Poisson simulation end to end."""
     from mist_charts.mist_api import (
         BatchingMethod,
-        EngineType,
+        ClientType,
         MISTCoordinator,
         LengthVariables,
-        LLMEngine,
-        PlatformConfig,
+        LLMClient,
+        ClusterConfig,
         PoissonDistribution,
         SchedulerConfig,
     )
 
     model = "meta-llama/meta-llama-3.1-8b"
-    platform = PlatformConfig(device="H100_GPU", tensor_parallel_size=1, model=model)
+    platform = ClusterConfig(device="H100_GPU", tensor_parallel_size=1, model=model)
 
     request_queue = PoissonDistribution(
         rps=2,
@@ -52,16 +52,16 @@ def check_simulation():
 
     # logging_file=None keeps the smoke test from leaving a trace.json behind.
     coordinator = MISTCoordinator(deepcopy(request_queue), logging_file=None)
-    coordinator.add_engine(
-        LLMEngine(
+    coordinator.add_client(
+        LLMClient(
             model=model,
-            engine_types=[EngineType.PREFILL, EngineType.DECODE],
+            client_types=[ClientType.PREFILL, ClientType.DECODE],
             scheduler_config=SchedulerConfig(
                 batching_method=BatchingMethod.CHUNKED, chunk_size=512
             ),
-            platform=platform,
+            cluster=platform,
         ),
-        [EngineType.PREFILL, EngineType.DECODE],
+        [ClientType.PREFILL, ClientType.DECODE],
     )
     coordinator.run_sim()
 
