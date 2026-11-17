@@ -121,6 +121,20 @@ def mist_package_path():
     return Path(importlib.import_module(MIST_PACKAGE).__file__).resolve().parent
 
 
+def mist_runtime_data_dir():
+    """Directory of MIST's profiled vLLM runtime tables.
+
+    ``mist/Clusters/vllm_runtime_data/`` since the paper-naming release;
+    ``Platforms/`` in earlier checkouts.
+    """
+    root = mist_package_path()
+    for sub in ("Clusters", "Platforms"):
+        path = root / sub / "vllm_runtime_data"
+        if path.is_dir():
+            return path
+    return root / "Clusters" / "vllm_runtime_data"
+
+
 def mist_version() -> str:
     """Best-effort version string, used by the smoke test's banner."""
     from importlib.metadata import version

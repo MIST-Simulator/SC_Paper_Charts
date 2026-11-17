@@ -83,11 +83,11 @@ from mist_charts.mist_api import (  # noqa: E402  (after the compat shim above)
     PoissonDistribution,
     SchedulerConfig,
     TraceIngestion,
-    mist_package_path,
+    mist_runtime_data_dir,
     vLLMPlatformConfig,
 )
 
-MIST_RUNTIME_DIR = mist_package_path() / "Platforms" / "vllm_runtime_data"
+MIST_RUNTIME_DIR = mist_runtime_data_dir()
 SHAREGPT_PATH = TRACE_DIR / "ShareGPT_V3_unfiltered_cleaned_split.json"
 _WORD_RE = re.compile(r"\S+")
 
